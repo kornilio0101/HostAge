@@ -42,7 +42,7 @@ if %errorlevel% neq 0 (
 )
 
 echo Compiling and Linking Hostage.exe (/MT Static CRT, /O2 Optimization)...
-cl.exe /nologo /O2 /GL /Gy /MT /EHsc /std:c++17 /W3 ^
+cl.exe /nologo /O2 /GL /Gy /MT /EHsc /std:c++17 /utf-8 /W3 ^
     /I src /I resources ^
     /Fo:bin\ ^
     src\main.cpp src\hosts_manager.cpp src\win_util.cpp ^

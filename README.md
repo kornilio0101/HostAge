@@ -60,11 +60,11 @@ Whenever changes are saved, Hostage directly calls `DnsFlushResolverCache()` fro
 
 ### 5. Domain Groups & Section Organization 📁
 Organize domains into logical groups like **Development**, **AdBlock**, **Privacy**, or custom projects:
-- **Add, Rename & Edit Groups**: Create new groups and rename existing ones at any time via the `⚙️ Groups...` manager.
+- **Add, Rename & Edit Groups**: Create new groups and rename existing ones at any time via the `Groups...` manager.
 - **Assign Domains to Groups**: Click any domain's group badge to quickly reassign it to another group, or select from the dropdown when editing/adding.
 - **Safe Group Removal (Zero Data Loss)**: When a group is deleted, all its domains and IPs **automatically revert to 'Ungrouped' and are NEVER deleted**.
 - **1-Click Group Toggling**: Visual group section headers feature a `Toggle Group` button to activate or disable an entire group of domains simultaneously.
-- **Group Filter Dropdown**: Quickly isolate any single group or view all groups with one click (`📁 All Groups ▼`).
+- **Group Filter Dropdown**: Quickly isolate any single group or view all groups with one click (`[All Groups v]`).
 
 ### 6. Automatic Safety Backups 🔄
 Before saving any modifications, an automated timestamped backup is generated (`hosts.bak_YYYYMMDD_HHMMSS`). If anything ever goes wrong, click **Backups** to restore any previous version with a single click.
@@ -75,12 +75,12 @@ Before saving any modifications, an automated timestamped backup is generated (`
 
 | Feature | Description |
 |---|---|
-| **📦 100% Portable** | Single standalone `.exe` (only **~368 KB**). Zero installer, zero dependencies, zero leftover registry keys. |
+| **📦 100% Portable** | Single standalone `.exe` (only **~387 KB**). Zero installer, zero dependencies, zero leftover registry keys. |
 | **📁 Domain Grouping** | Categorize mappings by group (`Dev`, `AdBlock`, etc.) with section headers and 1-click group toggling. |
 | **🪟 Windows 7 to 11** | Full compatibility with Windows 7 SP1, 8, 8.1, 10, and 11. Auto-detects OS edition and build version. |
 | **⚡ Quick IP Presets** | One-click chips for `127.0.0.1`, `0.0.0.0`, `[Dev]`, `[AdBlock]`, and `[Privacy]`. |
 | **🔍 Real-Time Search** | Filter hundreds of entries instantaneously by domain name, IP address, group, or inline comment. |
-| **🎯 Filter Tabs & Groups** | Switch between `All`, `Active`, `Disabled`, and filter by specific groups (`📁 All Groups ▼`). |
+| **🎯 Filter Tabs & Groups** | Switch between `All`, `Active`, `Disabled`, and filter by specific groups (`[All Groups v]`). |
 | **⚡ Bulk & Group Actions** | `Enable All`, `Disable All`, and per-group `Toggle Group` buttons for rapid batch testing. |
 | **✏️ In-Place Editor** | Quickly edit host mappings, assign new groups, update IPs, or add helpful comments. |
 | **📄 Notepad Integration** | Open the raw hosts file in Windows Notepad with a single click. |
@@ -97,7 +97,7 @@ Before saving any modifications, an automated timestamped backup is generated (`
 │  [127.0.0.1]  [0.0.0.0]  [General]  [Dev]  [AdBlock]  [Privacy]                         │
 │  [ 127.0.0.1    ] [ domain.com            ] [ Dev     ] [ Optional Comment ] [+ Add]    │
 ├─────────────────────────────────────────────────────────────────────────────────────────┤
-│  [All (14)]  [Active (11)]  [Disabled (3)]  [📁 All Groups ▼]   [Enable All] [Disable All]│
+│  [All (14)]  [Active (11)]  [Disabled (3)]  [All Groups v] [Groups...] [Enable All] [Dis]│
 │  [Search domains, IPs, groups...                                                      ] │
 ├─────────────────────────────────────────────────────────────────────────────────────────┤
 │ 📁 Development (3 entries - 2 active)                                     [Toggle Group]│

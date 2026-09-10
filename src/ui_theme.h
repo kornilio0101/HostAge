@@ -124,4 +124,23 @@ namespace UITheme {
         g.DrawString(text.c_str(), -1, font, badgeRect, &sf, &textBrush);
     }
 
+    // Draw a crisp vector folder icon
+    inline void DrawFolderIcon(Gdiplus::Graphics& g, float x, float y, const Gdiplus::Color& color) {
+        Gdiplus::SolidBrush brush(color);
+        // Tab
+        g.FillRectangle(&brush, x, y, 5.0f, 2.0f);
+        // Body with small rounding
+        Gdiplus::RectF body(x, y + 2.0f, 13.0f, 9.0f);
+        DrawRoundedRect(g, body, 1.5f, color, Gdiplus::Color(0, 0, 0, 0), 0);
+    }
+
+    // Draw a small dropdown chevron
+    inline void DrawDownChevron(Gdiplus::Graphics& g, float centerX, float centerY, const Gdiplus::Color& color) {
+        Gdiplus::Pen pen(color, 1.5f);
+        pen.SetStartCap(Gdiplus::LineCapRound);
+        pen.SetEndCap(Gdiplus::LineCapRound);
+        g.DrawLine(&pen, centerX - 3.5f, centerY - 1.5f, centerX, centerY + 2.0f);
+        g.DrawLine(&pen, centerX, centerY + 2.0f, centerX + 3.5f, centerY - 1.5f);
+    }
+
 } // namespace UITheme

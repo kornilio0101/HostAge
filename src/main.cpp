@@ -108,6 +108,11 @@ struct AppState {
     // Hovered bottom buttons
     int hoveredBottomBtn; // 0=None, 1=Reload, 2=Notepad, 3=Backup, 4=FlushDNS, 5=Save
 
+    // Dynamic Filter hit rects
+    std::vector<std::pair<Gdiplus::RectF, FilterMode>> tabRects;
+    Gdiplus::RectF rcGroupFilter;
+    Gdiplus::RectF rcManageGroups;
+
     ULONG_PTR gdiplusToken;
 };
 
@@ -577,7 +582,7 @@ void ShowAssignGroupMenu(HWND hWnd, int itemId) {
     }
 
     AppendMenuW(hMenu, MF_SEPARATOR, 0, NULL);
-    AppendMenuW(hMenu, MF_STRING, IDM_ASSIGN_BASE + 999, L"⚙️ Manage Groups...");
+    AppendMenuW(hMenu, MF_STRING, IDM_ASSIGN_BASE + 999, L"Manage Groups...");
 
     POINT pt;
     GetCursorPos(&pt);
@@ -616,7 +621,7 @@ void ShowGroupFilterMenu(HWND hWnd) {
     }
 
     AppendMenuW(hMenu, MF_SEPARATOR, 0, NULL);
-    AppendMenuW(hMenu, MF_STRING, IDM_GROUP_FILTER_BASE + 999, L"⚙️ Manage Groups (Add / Rename / Remove)...");
+    AppendMenuW(hMenu, MF_STRING, IDM_GROUP_FILTER_BASE + 999, L"Manage Groups (Add / Rename / Remove)...");
 
     POINT pt;
     GetCursorPos(&pt);
@@ -769,6 +774,7 @@ void PaintUI(HDC hdc, const RECT& clientRect) {
 
         // Filter Tabs: All, Active, Disabled
         float tabX = 20.0f;
+        g_app.tabRects.clear();
         auto drawTab = [&](const std::wstring& label, size_t count, bool isSelected, FilterMode mode) -> float {
             std::wstringstream ss;
             ss << label << L" (" << count << L")";
@@ -779,6 +785,8 @@ void PaintUI(HDC hdc, const RECT& clientRect) {
             float tabH = 30.0f;
 
             Gdiplus::RectF tabRect(tabX, filterY, tabW, tabH);
+            g_app.tabRects.push_back({ tabRect, mode });
+
             Gdiplus::Color bg = isSelected ? UITheme::Colors::Primary : Gdiplus::Color(255, 26, 29, 40);
             Gdiplus::Color border = isSelected ? UITheme::Colors::PrimaryHover : UITheme::Colors::BorderDark;
             Gdiplus::Color text = isSelected ? Gdiplus::Color(255, 255, 255, 255) : UITheme::Colors::TextSecondary;
@@ -801,24 +809,40 @@ void PaintUI(HDC hdc, const RECT& clientRect) {
 
         // Group Filter Button
         float grpFilterX = tabX;
-        std::wstring grpFilterLabel = g_app.selectedGroupFilter.empty() ? L"📁 All Groups ▼" : (L"📁 " + g_app.selectedGroupFilter + L" ▼");
+        std::wstring grpFilterLabel = g_app.selectedGroupFilter.empty() ? L"All Groups" : g_app.selectedGroupFilter;
         Gdiplus::RectF grpBounds;
         g.MeasureString(grpFilterLabel.c_str(), -1, &fontBold, Gdiplus::RectF(0, 0, 500, 100), NULL, &grpBounds);
-        float grpFilterW = grpBounds.Width + 18.0f;
+        float grpFilterW = grpBounds.Width + 48.0f;
         Gdiplus::RectF grpFilterRect(grpFilterX, filterY, grpFilterW, 30.0f);
-        Gdiplus::Color grpFilterBg = !g_app.selectedGroupFilter.empty() ? Gdiplus::Color(255, 67, 56, 202) : Gdiplus::Color(255, 32, 36, 52);
-        UITheme::DrawRoundedRect(g, grpFilterRect, 6.0f, grpFilterBg, UITheme::Colors::BorderDark, 1.0f);
+        g_app.rcGroupFilter = grpFilterRect;
+
+        bool hasActiveGrpFilter = !g_app.selectedGroupFilter.empty();
+        Gdiplus::Color grpFilterBg = hasActiveGrpFilter ? Gdiplus::Color(255, 67, 56, 202) : Gdiplus::Color(255, 32, 36, 52);
+        Gdiplus::Color grpBorder = hasActiveGrpFilter ? Gdiplus::Color(255, 99, 102, 241) : UITheme::Colors::BorderDark;
+        UITheme::DrawRoundedRect(g, grpFilterRect, 6.0f, grpFilterBg, grpBorder, 1.0f);
+
+        // Vector folder icon
+        Gdiplus::Color fldIconColor = hasActiveGrpFilter ? Gdiplus::Color(255, 255, 255, 255) : UITheme::Colors::AccentCyan;
+        UITheme::DrawFolderIcon(g, grpFilterX + 10.0f, filterY + 9.0f, fldIconColor);
+
+        // Group filter text
+        Gdiplus::SolidBrush grpTextBrush(hasActiveGrpFilter ? Gdiplus::Color(255, 255, 255, 255) : UITheme::Colors::TextPrimary);
+        g.DrawString(grpFilterLabel.c_str(), -1, &fontBold, Gdiplus::PointF(grpFilterX + 28.0f, filterY + 7.0f), &grpTextBrush);
+
+        // Vector down chevron
+        Gdiplus::Color chevronColor = hasActiveGrpFilter ? Gdiplus::Color(255, 255, 255, 255) : UITheme::Colors::TextSecondary;
+        UITheme::DrawDownChevron(g, grpFilterX + grpFilterW - 12.0f, filterY + 15.0f, chevronColor);
+
+        // Dedicated "Groups..." Button
+        float mgmtBtnX = grpFilterX + grpFilterW + 6.0f;
+        float mgmtBtnW = 86.0f;
+        Gdiplus::RectF mgmtRect(mgmtBtnX, filterY, mgmtBtnW, 30.0f);
+        g_app.rcManageGroups = mgmtRect;
+        UITheme::DrawRoundedRect(g, mgmtRect, 6.0f, Gdiplus::Color(255, 30, 34, 48), UITheme::Colors::BorderDark, 1.0f);
         Gdiplus::StringFormat sfCenter;
         sfCenter.SetAlignment(Gdiplus::StringAlignmentCenter);
         sfCenter.SetLineAlignment(Gdiplus::StringAlignmentCenter);
-        g.DrawString(grpFilterLabel.c_str(), -1, &fontBold, grpFilterRect, &sfCenter, &textWhite);
-
-        // Dedicated "Manage Groups" Button
-        float mgmtBtnX = grpFilterX + grpFilterW + 6.0f;
-        float mgmtBtnW = 92.0f;
-        Gdiplus::RectF mgmtRect(mgmtBtnX, filterY, mgmtBtnW, 30.0f);
-        UITheme::DrawRoundedRect(g, mgmtRect, 6.0f, Gdiplus::Color(255, 30, 34, 48), UITheme::Colors::BorderDark, 1.0f);
-        g.DrawString(L"⚙️ Groups...", -1, &fontSmall, mgmtRect, &sfCenter, &textWhite);
+        g.DrawString(L"Groups...", -1, &fontSmall, mgmtRect, &sfCenter, &textWhite);
 
         // Bulk action buttons on the right of filter bar
         float bulkRightX = (float)width - 24.0f;
@@ -872,16 +896,22 @@ void PaintUI(HDC hdc, const RECT& clientRect) {
                         Gdiplus::RectF grpRect(20.0f, (float)curY, cardW, (float)rHeight);
                         UITheme::DrawRoundedRect(g, grpRect, 6.0f, Gdiplus::Color(255, 24, 28, 40), UITheme::Colors::BorderDark, 1.0f);
 
-                        // Icon and Name
-                        std::wstring grpText = L"📁  " + row.groupName;
-                        g.DrawString(grpText.c_str(), -1, &fontBold, Gdiplus::PointF(32, (float)curY + 9.0f), &textWhite);
+                        // Crisp vector folder icon
+                        UITheme::DrawFolderIcon(g, 32.0f, (float)curY + 12.0f, UITheme::Colors::AccentCyan);
+
+                        // Group name
+                        g.DrawString(row.groupName.c_str(), -1, &fontBold, Gdiplus::PointF(52.0f, (float)curY + 9.0f), &textWhite);
 
                         // Count badge
+                        Gdiplus::RectF nameBounds;
+                        g.MeasureString(row.groupName.c_str(), -1, &fontBold, Gdiplus::PointF(0, 0), &nameBounds);
+                        float badgeX = 56.0f + nameBounds.Width;
+
                         size_t totalInGrp = g_app.hosts.GetGroupCount(row.groupName);
                         size_t activeInGrp = g_app.hosts.GetGroupActiveCount(row.groupName);
                         std::wstringstream gss;
                         gss << totalInGrp << L" entries (" << activeInGrp << L" active)";
-                        UITheme::DrawBadge(g, gss.str(), 60.0f + (float)row.groupName.size() * 9.5f, (float)curY + 7.0f, UITheme::Colors::TextSecondary, Gdiplus::Color(255, 34, 38, 54), &fontSmall, 6, 2);
+                        UITheme::DrawBadge(g, gss.str(), badgeX, (float)curY + 7.0f, UITheme::Colors::TextSecondary, Gdiplus::Color(255, 34, 38, 54), &fontSmall, 6, 2);
 
                         // Toggle Group Button
                         float togW = 95.0f;
@@ -1173,28 +1203,19 @@ void HandleMouseClick(int x, int y) {
 
     // Filter tabs & Group Selector click
     if (y >= l.filterY + 6 && y <= l.filterY + 36) {
-        // Tab All
-        if (x >= 20 && x <= 80) {
-            g_app.filter = FilterMode::All;
-            UpdateFilteredList();
-            InvalidateRect(g_app.hWndMain, NULL, FALSE);
-            return;
-        } else if (x >= 88 && x <= 165) {
-            g_app.filter = FilterMode::ActiveOnly;
-            UpdateFilteredList();
-            InvalidateRect(g_app.hWndMain, NULL, FALSE);
-            return;
-        } else if (x >= 173 && x <= 265) {
-            g_app.filter = FilterMode::DisabledOnly;
-            UpdateFilteredList();
-            InvalidateRect(g_app.hWndMain, NULL, FALSE);
-            return;
-        } else if (x >= 273 && x <= 395) {
-            // Group Filter dropdown
+        for (const auto& tr : g_app.tabRects) {
+            if (tr.first.Contains((float)x, (float)y)) {
+                g_app.filter = tr.second;
+                UpdateFilteredList();
+                InvalidateRect(g_app.hWndMain, NULL, FALSE);
+                return;
+            }
+        }
+        if (g_app.rcGroupFilter.Contains((float)x, (float)y)) {
             ShowGroupFilterMenu(g_app.hWndMain);
             return;
-        } else if (x >= 400 && x <= 495) {
-            // Manage Groups button
+        }
+        if (g_app.rcManageGroups.Contains((float)x, (float)y)) {
             OpenManageGroupsWindow(g_app.hWndMain);
             return;
         }
