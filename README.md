@@ -75,41 +75,42 @@ Before saving any modifications, an automated timestamped backup is generated (`
 
 | Feature | Description |
 |---|---|
-| **📦 100% Portable** | Single standalone `.exe` (only **~387 KB**). Zero installer, zero dependencies, zero leftover registry keys. |
-| **📁 Domain Grouping** | Categorize mappings by group (`Dev`, `AdBlock`, etc.) with section headers and 1-click group toggling. |
+| **📦 100% Portable** | Single standalone `.exe` (only **~407 KB**). Zero installer, zero dependencies, zero leftover registry keys. |
+| **🧭 Sidebar Navigation** | Quick access to `All Entries`, `Active`, `Disabled`, `Groups`, `Settings`, and `Logs`. |
+| **⚡ Quick Add Card** | Dedicated card with `IP Address` and `Domain` inputs, styled `Add` button, and inline actions. |
+| **🔄 Quick Actions Toolbar** | 1-click access to `↓ Import`, `↑ Export`, `↓ Backup`, `↺ Restore`, and `↺ Flush DNS`. |
 | **🪟 Windows 7 to 11** | Full compatibility with Windows 7 SP1, 8, 8.1, 10, and 11. Auto-detects OS edition and build version. |
-| **⚡ Quick IP Presets** | One-click chips for `127.0.0.1`, `0.0.0.0`, `[Dev]`, `[AdBlock]`, and `[Privacy]`. |
-| **🔍 Real-Time Search** | Filter hundreds of entries instantaneously by domain name, IP address, group, or inline comment. |
-| **🎯 Filter Tabs & Groups** | Switch between `All`, `Active`, `Disabled`, and filter by specific groups (`[All Groups v]`). |
-| **⚡ Bulk & Group Actions** | `Enable All`, `Disable All`, and per-group `Toggle Group` buttons for rapid batch testing. |
-| **✏️ In-Place Editor** | Quickly edit host mappings, assign new groups, update IPs, or add helpful comments. |
-| **📄 Notepad Integration** | Open the raw hosts file in Windows Notepad with a single click. |
-| **🎨 Modern Dark UI** | Sleek obsidian aesthetic (`#12131A`), rounded slate cards, emerald active badges, and Segoe UI typography. |
+| **📁 Domain Grouping** | Categorize mappings by group (`Dev`, `AdBlock`, etc.) with section headers and full group management. |
+| **🔘 Fluent Toggle Switches** | Toggle domain routings on or off instantly with smooth iOS/Fluent switches. |
+| **✏️ In-Place Editor** | Quickly edit host mappings, reassign groups, update IPs, or add comments via modal editor. |
+| **📜 Activity & Event Logs** | Full session logging of DNS flushes, backups, additions, and status changes. |
+| **🎨 Modern Dashboard UI** | Sleek obsidian aesthetic (`#0E1017`), slate cards (`#161926`), emerald active badges, and vector icons. |
 
 ---
 
 ## 🖥️ User Interface Tour
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────────────────┐
-│ 🛡️ HOSTAGE  Hosts File Manager & Domain Groups    [ADMINISTRATOR]  [Windows 11 Build 22631]│
-├─────────────────────────────────────────────────────────────────────────────────────────┤
-│  [127.0.0.1]  [0.0.0.0]  [General]  [Dev]  [AdBlock]  [Privacy]                         │
-│  [ 127.0.0.1    ] [ domain.com            ] [ Dev     ] [ Optional Comment ] [+ Add]    │
-├─────────────────────────────────────────────────────────────────────────────────────────┤
-│  [All (14)]  [Active (11)]  [Disabled (3)]  [All Groups v] [Groups...] [Enable All] [Dis]│
-│  [Search domains, IPs, groups...                                                      ] │
-├─────────────────────────────────────────────────────────────────────────────────────────┤
-│ 📁 Development (3 entries - 2 active)                                     [Toggle Group]│
-│  [●] [ACTIVE]   127.0.0.1   [Dev]      mysite.local      # Dev test     [Edit] [Delete] │
-│  [●] [ACTIVE]   127.0.0.1   [Dev]      api.internal                     [Edit] [Delete] │
-│                                                                                         │
-│ 📁 AdBlock (2 entries - 2 active)                                         [Toggle Group]│
-│  [●] [ACTIVE]   0.0.0.0     [AdBlock]  adservice.google.com             [Edit] [Delete] │
-│  [●] [ACTIVE]   0.0.0.0     [AdBlock]  telemetry.tracker.com            [Edit] [Delete] │
-├─────────────────────────────────────────────────────────────────────────────────────────┤
-│  C:\Windows\System32\drivers\etc\hosts                [Reload] [Notepad] [Backups] [Save]│
-└─────────────────────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│ 🗄️ HOSTAGE  [✔ ADMINISTRATOR]                                  [⊞ Windows 11]  [—] [▢] [✕] │
+├───────────┬─────────────────────────────────────────────────────────────────────────────────┤
+│  [ ⊞ ]    │  ┌ Quick Add ────────────────────────────────────────────────────────────────┐  │
+│ All Entries│  │  IP Address            Domain                                             │  │
+│           │  │  [ 127.0.0.1       ]   [ domain.com                               ] [Add] │  │
+│  [ ⚡ ]   │  │                                                                           │  │
+│  Active   │  │  ↓ Import   ↑ Export   ↓ Backup   ↺ Restore                  ↺ Flush DNS   │  │
+│           │  └───────────────────────────────────────────────────────────────────────────┘  │
+│  [ ⊝ ]    │                                                                                 │
+│ Disabled  │  ┌───────────────────────────────────────────────────────────────────────────┐  │
+│           │  │  adserver.com                [ 127.0.0.1 ]       [ Active ]   [●   ] [✏] [🗑]│  │
+│  [ 👥 ]   │  ├───────────────────────────────────────────────────────────────────────────┤  │
+│  Groups   │  │  dev.local                   [ 192.168.1.50 ]    [ Active ]   [   ●] [✏] [🗑]│  │
+│           │  ├───────────────────────────────────────────────────────────────────────────┤  │
+│  [ ⚙ ]   │  │  telemetry.service.com       [ 127.0.0.1 ]       [ Active ]   [●   ] [✏] [🗑]│  │
+│ Settings  │  └───────────────────────────────────────────────────────────────────────────┘  │
+│  [ 📄 ]   │                                                                                 │
+│   Logs    │                                                                                 │
+└───────────┴─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---

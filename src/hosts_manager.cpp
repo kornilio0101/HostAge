@@ -746,3 +746,140 @@ bool HostsManager::RestoreBackup(const std::wstring& backupPath, std::wstring& o
     }
     return Load(outError);
 }
+
+bool HostsManager::ExportToFile(const std::wstring& targetPath, std::wstring& outError) {
+    std::wstring outputText;
+    for (const auto& fl : m_lines) {
+        if (fl.type == FileLineType::RawCommentOrBlank) {
+            outputText += fl.rawContent;
+            outputText += L"\r\n";
+        } else if (fl.type == FileLineType::HostEntryItem) {
+            auto it = std::find_if(m_items.begin(), m_items.end(), [&](const HostItem& hi) {
+                return hi.id == fl.hostItemId;
+            });
+            if (it != m_items.end()) {
+                outputText += FormatHostLine(*it);
+                outputText += L"\r\n";
+            }
+        }
+    }
+
+    HANDLE hFile = CreateFileW(
+        targetPath.c_str(),
+        GENERIC_WRITE,
+        0,
+        NULL,
+        CREATE_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL,
+        NULL
+    );
+
+    if (hFile == INVALID_HANDLE_VALUE) {
+        DWORD err = GetLastError();
+        outError = L"Could not export file (Error " + std::to_wstring(err) + L").";
+        return false;
+    }
+
+    int utf8Len = WideCharToMultiByte(CP_UTF8, 0, outputText.c_str(), (int)outputText.size(), NULL, 0, NULL, NULL);
+    std::string utf8Str;
+    if (utf8Len > 0) {
+        utf8Str.resize(utf8Len);
+        WideCharToMultiByte(CP_UTF8, 0, outputText.c_str(), (int)outputText.size(), &utf8Str[0], utf8Len, NULL, NULL);
+    }
+
+    DWORD bytesWritten = 0;
+    if (!WriteFile(hFile, utf8Str.data(), (DWORD)utf8Str.size(), &bytesWritten, NULL)) {
+        DWORD err = GetLastError();
+        CloseHandle(hFile);
+        outError = L"Failed writing export file (Error " + std::to_wstring(err) + L").";
+        return false;
+    }
+    CloseHandle(hFile);
+    return true;
+}
+
+bool HostsManager::ImportFromFile(const std::wstring& sourcePath, std::wstring& outError) {
+    HANDLE hFile = CreateFileW(
+        sourcePath.c_str(),
+        GENERIC_READ,
+        FILE_SHARE_READ,
+        NULL,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        NULL
+    );
+
+    if (hFile == INVALID_HANDLE_VALUE) {
+        DWORD err = GetLastError();
+        outError = L"Could not open source file (Error " + std::to_wstring(err) + L").";
+        return false;
+    }
+
+    DWORD fileSize = GetFileSize(hFile, NULL);
+    if (fileSize == INVALID_FILE_SIZE) {
+        CloseHandle(hFile);
+        outError = L"Failed to query file size.";
+        return false;
+    }
+
+    std::vector<char> buffer(fileSize + 1, 0);
+    DWORD bytesRead = 0;
+    if (!ReadFile(hFile, buffer.data(), fileSize, &bytesRead, NULL)) {
+        CloseHandle(hFile);
+        outError = L"Failed to read file.";
+        return false;
+    }
+    CloseHandle(hFile);
+
+    const char* p = buffer.data();
+    size_t len = bytesRead;
+    if (len >= 3 && (unsigned char)p[0] == 0xEF && (unsigned char)p[1] == 0xBB && (unsigned char)p[2] == 0xBF) {
+        p += 3;
+        len -= 3;
+    }
+
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, p, (int)len, NULL, 0);
+    std::wstring wideContent;
+    if (wlen > 0) {
+        wideContent.resize(wlen);
+        MultiByteToWideChar(CP_UTF8, 0, p, (int)len, &wideContent[0], wlen);
+    } else {
+        wlen = MultiByteToWideChar(CP_ACP, 0, p, (int)len, NULL, 0);
+        if (wlen > 0) {
+            wideContent.resize(wlen);
+            MultiByteToWideChar(CP_ACP, 0, p, (int)len, &wideContent[0], wlen);
+        }
+    }
+
+    std::vector<std::wstring> lines;
+    std::wstring curLine;
+    for (wchar_t ch : wideContent) {
+        if (ch == L'\r') continue;
+        if (ch == L'\n') {
+            lines.push_back(curLine);
+            curLine.clear();
+        } else {
+            curLine += ch;
+        }
+    }
+    if (!curLine.empty()) lines.push_back(curLine);
+
+    int importedCount = 0;
+    for (const auto& l : lines) {
+        HostItem item;
+        bool wasCommented = false;
+        if (TryParseHostLine(l, item, wasCommented)) {
+            AddItem(item.ip, item.domain, item.comment, L"Imported", item.enabled);
+            importedCount++;
+        }
+    }
+
+    if (importedCount == 0) {
+        outError = L"No valid hosts entries found in the imported file.";
+        return false;
+    }
+
+    m_isModified = true;
+    return true;
+}
+

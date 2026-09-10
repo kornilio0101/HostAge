@@ -83,6 +83,10 @@ public:
     bool RestoreBackup(const std::wstring& backupPath, std::wstring& outError);
     bool CreateBackupNow(std::wstring& outBackupPath, std::wstring& outError);
 
+    // Import / Export
+    bool ExportToFile(const std::wstring& targetPath, std::wstring& outError);
+    bool ImportFromFile(const std::wstring& sourcePath, std::wstring& outError);
+
     // Statistics
     size_t GetTotalCount() const { return m_items.size(); }
     size_t GetActiveCount() const;
