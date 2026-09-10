@@ -1,0 +1,11 @@
+# Visual Studio & MSVC
+.vs/
+*.obj
+*.res
+*.pdb
+*.ilk
+bin/
+
+# Temporary files
+*.tmp
+*.log
