@@ -10,6 +10,7 @@ struct HostItem {
     std::wstring ip;            // IP address (IPv4 or IPv6)
     std::wstring domain;        // Domain name(s)
     std::wstring comment;       // Inline comment (without leading #)
+    std::wstring group;         // Group name (e.g. L"General", L"Development")
     size_t lineIndex;           // Original line index in file
 };
 
@@ -45,10 +46,10 @@ public:
     const std::vector<HostItem>& GetItems() const { return m_items; }
 
     // Add a new entry (default to enabled)
-    int AddItem(const std::wstring& ip, const std::wstring& domain, const std::wstring& comment, bool enabled = true);
+    int AddItem(const std::wstring& ip, const std::wstring& domain, const std::wstring& comment, const std::wstring& group = L"General", bool enabled = true);
 
     // Update an existing entry
-    bool UpdateItem(int id, const std::wstring& ip, const std::wstring& domain, const std::wstring& comment);
+    bool UpdateItem(int id, const std::wstring& ip, const std::wstring& domain, const std::wstring& comment, const std::wstring& group = L"General");
 
     // Toggle enabled state of an entry
     bool ToggleItem(int id);
@@ -58,6 +59,13 @@ public:
 
     // Delete an entry
     bool DeleteItem(int id);
+
+    // Groups
+    std::vector<std::wstring> GetGroups() const;
+    void SetGroupEnabled(const std::wstring& group, bool enabled);
+    void ToggleGroup(const std::wstring& group);
+    size_t GetGroupCount(const std::wstring& group) const;
+    size_t GetGroupActiveCount(const std::wstring& group) const;
 
     // Enable or disable all entries
     void SetAllEnabled(bool enabled);

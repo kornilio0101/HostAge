@@ -8,7 +8,7 @@
 <br/>
 
 [![Windows Compatibility](https://img.shields.io/badge/Windows-7%20%7C%208%20%7C%208.1%20%7C%2010%20%7C%2011-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com)
-[![Binary Size](https://img.shields.io/badge/Binary_Size-337_KB-8A2BE2?style=for-the-badge&logo=speedtest&logoColor=white)](https://github.com)
+[![Binary Size](https://img.shields.io/badge/Binary_Size-368_KB-8A2BE2?style=for-the-badge&logo=speedtest&logoColor=white)](https://github.com)
 [![Single Executable](https://img.shields.io/badge/Portable-1_File_(Zero_DLLs)-10B981?style=for-the-badge&logo=files&logoColor=white)](https://github.com)
 [![Language](https://img.shields.io/badge/C%2B%2B-17_Native-F34B7D?style=for-the-badge&logo=c%2B%2B&logoColor=white)](https://github.com)
 [![License](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
@@ -58,7 +58,13 @@ Turn any domain routing on or off with an intuitive Fluent/iOS-style toggle swit
 ### 4. Instant Windows DNS Cache Flushing ⚡
 Whenever changes are saved, Hostage directly calls `DnsFlushResolverCache()` from `dnsapi.dll` and executes `ipconfig /flushdns` in the background. Your browser and network stack immediately pick up changes without needing a system reboot.
 
-### 5. Automatic Safety Backups 🔄
+### 5. Domain Groups & Section Organization 📁
+Organize domains into logical groups like **Development**, **AdBlock**, **Privacy**, or custom projects:
+- Hosts files maintain sections using clean headers (`# [Development]`, `# [AdBlock]`).
+- Visual group banners show active counts and allow one-click **Toggle Group** to activate or disable an entire set of domains at once.
+- Filter dropdown allows isolating any single group with one click.
+
+### 6. Automatic Safety Backups 🔄
 Before saving any modifications, an automated timestamped backup is generated (`hosts.bak_YYYYMMDD_HHMMSS`). If anything ever goes wrong, click **Backups** to restore any previous version with a single click.
 
 ---
@@ -67,13 +73,14 @@ Before saving any modifications, an automated timestamped backup is generated (`
 
 | Feature | Description |
 |---|---|
-| **📦 100% Portable** | Single standalone `.exe` (only **~337 KB**). Zero installer, zero dependencies, zero leftover registry keys. |
+| **📦 100% Portable** | Single standalone `.exe` (only **~368 KB**). Zero installer, zero dependencies, zero leftover registry keys. |
+| **📁 Domain Grouping** | Categorize mappings by group (`Dev`, `AdBlock`, etc.) with section headers and 1-click group toggling. |
 | **🪟 Windows 7 to 11** | Full compatibility with Windows 7 SP1, 8, 8.1, 10, and 11. Auto-detects OS edition and build version. |
-| **⚡ Quick IP Presets** | One-click chips for `127.0.0.1` (Localhost) and `0.0.0.0` (Null Route / Ad Blocking). |
-| **🔍 Real-Time Search** | Filter hundreds of entries instantaneously by domain name, IP address, or inline comment. |
-| **🎯 Filter Tabs** | Switch between `All Entries`, `Active Only`, and `Disabled Only` views. |
-| **⚡ Bulk Actions** | One-click `Enable All` and `Disable All` buttons for rapid batch testing. |
-| **✏️ In-Place Editor** | Quickly edit existing host mappings, domain aliases, or add helpful comments. |
+| **⚡ Quick IP Presets** | One-click chips for `127.0.0.1`, `0.0.0.0`, `[Dev]`, `[AdBlock]`, and `[Privacy]`. |
+| **🔍 Real-Time Search** | Filter hundreds of entries instantaneously by domain name, IP address, group, or inline comment. |
+| **🎯 Filter Tabs & Groups** | Switch between `All`, `Active`, `Disabled`, and filter by specific groups (`📁 All Groups ▼`). |
+| **⚡ Bulk & Group Actions** | `Enable All`, `Disable All`, and per-group `Toggle Group` buttons for rapid batch testing. |
+| **✏️ In-Place Editor** | Quickly edit host mappings, assign new groups, update IPs, or add helpful comments. |
 | **📄 Notepad Integration** | Open the raw hosts file in Windows Notepad with a single click. |
 | **🎨 Modern Dark UI** | Sleek obsidian aesthetic (`#12131A`), rounded slate cards, emerald active badges, and Segoe UI typography. |
 
@@ -82,22 +89,25 @@ Before saving any modifications, an automated timestamped backup is generated (`
 ## 🖥️ User Interface Tour
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ 🛡️ HOSTAGE  Hosts File Manager      [ADMINISTRATOR]  [Windows 11 Build 22631]│
-├─────────────────────────────────────────────────────────────────────────────┤
-│  [127.0.0.1]  [0.0.0.0 (AdBlock)]                                           │
-│  [ 127.0.0.1      ] [ domain.com                      ] [ Optional Comment ]│
-│  [+ Add Entry]                                                              │
-├─────────────────────────────────────────────────────────────────────────────┤
-│  [All Entries (14)]  [Active (11)]  [Disabled (3)]      [Enable All] [Disable All]│
-│  [Search domains, IPs, comments...                                        ] │
-├─────────────────────────────────────────────────────────────────────────────┤
-│  [●] [ACTIVE]   127.0.0.1    mysite.local          # Dev test    [Edit] [Delete]│
-│  [○] [DISABLED] 0.0.0.0      adservice.google.com                [Edit] [Delete]│
-│  [●] [ACTIVE]   192.168.1.50 staging.internal                    [Edit] [Delete]│
-├─────────────────────────────────────────────────────────────────────────────┤
-│  C:\Windows\System32\drivers\etc\hosts    [Reload] [Notepad] [Backups] [Save]│
-└─────────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│ 🛡️ HOSTAGE  Hosts File Manager & Domain Groups    [ADMINISTRATOR]  [Windows 11 Build 22631]│
+├─────────────────────────────────────────────────────────────────────────────────────────┤
+│  [127.0.0.1]  [0.0.0.0]  [General]  [Dev]  [AdBlock]  [Privacy]                         │
+│  [ 127.0.0.1    ] [ domain.com            ] [ Dev     ] [ Optional Comment ] [+ Add]    │
+├─────────────────────────────────────────────────────────────────────────────────────────┤
+│  [All (14)]  [Active (11)]  [Disabled (3)]  [📁 All Groups ▼]   [Enable All] [Disable All]│
+│  [Search domains, IPs, groups...                                                      ] │
+├─────────────────────────────────────────────────────────────────────────────────────────┤
+│ 📁 Development (3 entries - 2 active)                                     [Toggle Group]│
+│  [●] [ACTIVE]   127.0.0.1   [Dev]      mysite.local      # Dev test     [Edit] [Delete] │
+│  [●] [ACTIVE]   127.0.0.1   [Dev]      api.internal                     [Edit] [Delete] │
+│                                                                                         │
+│ 📁 AdBlock (2 entries - 2 active)                                         [Toggle Group]│
+│  [●] [ACTIVE]   0.0.0.0     [AdBlock]  adservice.google.com             [Edit] [Delete] │
+│  [●] [ACTIVE]   0.0.0.0     [AdBlock]  telemetry.tracker.com            [Edit] [Delete] │
+├─────────────────────────────────────────────────────────────────────────────────────────┤
+│  C:\Windows\System32\drivers\etc\hosts                [Reload] [Notepad] [Backups] [Save]│
+└─────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---

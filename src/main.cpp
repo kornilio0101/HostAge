@@ -29,6 +29,7 @@
 #define IDC_EDIT_COMMENT     1003
 #define IDC_BTN_ADD          1004
 #define IDC_EDIT_SEARCH      1005
+#define IDC_EDIT_GROUP       1008
 
 #define IDC_PRESET_127       1006
 #define IDC_PRESET_000       1007
@@ -45,13 +46,25 @@
 #define IDC_BTN_ENABLE_ALL   1025
 #define IDC_BTN_DISABLE_ALL  1026
 
-#define IDM_RESTORE_BASE     2000
+#define IDM_RESTORE_BASE      2000
+#define IDM_GROUP_FILTER_BASE 3000
 
 // Filter modes
 enum class FilterMode {
     All,
     ActiveOnly,
     DisabledOnly
+};
+
+enum class ListRowType {
+    GroupHeader,
+    HostCard
+};
+
+struct ListRow {
+    ListRowType type;
+    std::wstring groupName;
+    int hostItemId;
 };
 
 // Global App State
@@ -62,6 +75,7 @@ struct AppState {
     // Child controls
     HWND hEditIp;
     HWND hEditDomain;
+    HWND hEditGroup;
     HWND hEditComment;
     HWND hBtnAdd;
     HWND hEditSearch;
@@ -75,6 +89,7 @@ struct AppState {
     bool isAdmin;
 
     FilterMode filter;
+    std::wstring selectedGroupFilter; // Empty = All Groups
     std::wstring searchQuery;
     std::wstring statusToast;
     DWORD toastTimer;
@@ -82,12 +97,12 @@ struct AppState {
     // Scrolling & Layout
     int scrollOffset;
     int maxScroll;
-    int hoveredItemIndex;
-    int hoveredButton; // 0=None, 1=Toggle, 2=Edit, 3=Delete
+    int hoveredRowIndex;
+    int hoveredButton; // 0=None, 1=Toggle, 2=Edit, 3=Delete, 4=GroupToggle
     int activeEditId;
 
-    // Filtered list cache
-    std::vector<int> visibleItemIds;
+    // Filtered list rows
+    std::vector<ListRow> visibleRows;
 
     // Hovered bottom buttons
     int hoveredBottomBtn; // 0=None, 1=Reload, 2=Notepad, 3=Backup, 4=FlushDNS, 5=Save
@@ -109,26 +124,60 @@ static std::wstring ToLower(const std::wstring& s) {
     return r;
 }
 
+static inline int GetRowHeight(const ListRow& row) {
+    return (row.type == ListRowType::GroupHeader) ? 36 : 58;
+}
+
 void UpdateFilteredList() {
-    g_app.visibleItemIds.clear();
+    g_app.visibleRows.clear();
     std::wstring query = ToLower(g_app.searchQuery);
 
-    for (const auto& item : g_app.hosts.GetItems()) {
-        if (g_app.filter == FilterMode::ActiveOnly && !item.enabled) continue;
-        if (g_app.filter == FilterMode::DisabledOnly && item.enabled) continue;
+    std::vector<std::wstring> allGroups = g_app.hosts.GetGroups();
 
-        if (!query.empty()) {
-            std::wstring ipL = ToLower(item.ip);
-            std::wstring domL = ToLower(item.domain);
-            std::wstring comL = ToLower(item.comment);
-            if (ipL.find(query) == std::wstring::npos &&
-                domL.find(query) == std::wstring::npos &&
-                comL.find(query) == std::wstring::npos)
-            {
-                continue;
+    for (const auto& grp : allGroups) {
+        if (!g_app.selectedGroupFilter.empty() && grp != g_app.selectedGroupFilter) {
+            continue;
+        }
+
+        std::vector<int> groupItemIds;
+        for (const auto& item : g_app.hosts.GetItems()) {
+            std::wstring itemGrp = item.group.empty() ? L"General" : item.group;
+            if (itemGrp != grp) continue;
+
+            if (g_app.filter == FilterMode::ActiveOnly && !item.enabled) continue;
+            if (g_app.filter == FilterMode::DisabledOnly && item.enabled) continue;
+
+            if (!query.empty()) {
+                std::wstring ipL = ToLower(item.ip);
+                std::wstring domL = ToLower(item.domain);
+                std::wstring comL = ToLower(item.comment);
+                std::wstring grpL = ToLower(itemGrp);
+                if (ipL.find(query) == std::wstring::npos &&
+                    domL.find(query) == std::wstring::npos &&
+                    comL.find(query) == std::wstring::npos &&
+                    grpL.find(query) == std::wstring::npos)
+                {
+                    continue;
+                }
+            }
+            groupItemIds.push_back(item.id);
+        }
+
+        if (!groupItemIds.empty()) {
+            ListRow hr;
+            hr.type = ListRowType::GroupHeader;
+            hr.groupName = grp;
+            hr.hostItemId = 0;
+            g_app.visibleRows.push_back(hr);
+
+            for (int id : groupItemIds) {
+                ListRow cr;
+                cr.type = ListRowType::HostCard;
+                cr.groupName = grp;
+                cr.hostItemId = id;
+                g_app.visibleRows.push_back(cr);
             }
         }
-        g_app.visibleItemIds.push_back(item.id);
     }
 }
 
@@ -138,12 +187,11 @@ void ShowToast(const std::wstring& msg) {
     InvalidateRect(g_app.hWndMain, NULL, FALSE);
 }
 
-// Subclass edit controls for modern dark appearance
+// Subclass edit controls for modern dark appearance & Enter key
 static WNDPROC g_OldEditProc = NULL;
 static LRESULT CALLBACK DarkEditProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (msg == WM_KEYDOWN && wParam == VK_RETURN) {
-        // Trigger Add button if in IP, Domain, or Comment edit box
-        if (hWnd == g_app.hEditIp || hWnd == g_app.hEditDomain || hWnd == g_app.hEditComment) {
+        if (hWnd == g_app.hEditIp || hWnd == g_app.hEditDomain || hWnd == g_app.hEditGroup || hWnd == g_app.hEditComment) {
             SendMessage(g_app.hWndMain, WM_COMMAND, IDC_BTN_ADD, 0);
             return 0;
         }
@@ -151,100 +199,11 @@ static LRESULT CALLBACK DarkEditProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM 
     return CallWindowProc(g_OldEditProc, hWnd, msg, wParam, lParam);
 }
 
-// Dialog for editing an existing entry
-INT_PTR CALLBACK EditDialogProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam) {
-    switch (msg) {
-    case WM_INITDIALOG: {
-        // Center dialog
-        RECT rcOwner, rcDlg;
-        GetWindowRect(g_app.hWndMain, &rcOwner);
-        GetWindowRect(hDlg, &rcDlg);
-        int dlgW = rcDlg.right - rcDlg.left;
-        int dlgH = rcDlg.bottom - rcDlg.top;
-        int x = rcOwner.left + (rcOwner.right - rcOwner.left - dlgW) / 2;
-        int y = rcOwner.top + (rcOwner.bottom - rcOwner.top - dlgH) / 2;
-        SetWindowPos(hDlg, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
-
-        // Find item
-        for (const auto& item : g_app.hosts.GetItems()) {
-            if (item.id == g_app.activeEditId) {
-                SetDlgItemTextW(hDlg, 301, item.ip.c_str());
-                SetDlgItemTextW(hDlg, 302, item.domain.c_str());
-                SetDlgItemTextW(hDlg, 303, item.comment.c_str());
-                CheckDlgButton(hDlg, 304, item.enabled ? BST_CHECKED : BST_UNCHECKED);
-                break;
-            }
-        }
-        return TRUE;
-    }
-    case WM_COMMAND: {
-        int id = LOWORD(wParam);
-        if (id == IDOK) {
-            wchar_t szIp[256] = {0};
-            wchar_t szDomain[1024] = {0};
-            wchar_t szComment[1024] = {0};
-            GetDlgItemTextW(hDlg, 301, szIp, 256);
-            GetDlgItemTextW(hDlg, 302, szDomain, 1024);
-            GetDlgItemTextW(hDlg, 303, szComment, 1024);
-            bool enabled = (IsDlgButtonChecked(hDlg, 304) == BST_CHECKED);
-
-            if (!HostsManager::IsValidIp(szIp)) {
-                MessageBoxW(hDlg, L"Please enter a valid IP address (e.g. 127.0.0.1 or 0.0.0.0).", L"Validation", MB_OK | MB_ICONWARNING);
-                return TRUE;
-            }
-            if (!HostsManager::IsValidDomain(szDomain)) {
-                MessageBoxW(hDlg, L"Please enter a valid domain name.", L"Validation", MB_OK | MB_ICONWARNING);
-                return TRUE;
-            }
-
-            g_app.hosts.UpdateItem(g_app.activeEditId, szIp, szDomain, szComment);
-            g_app.hosts.SetItemEnabled(g_app.activeEditId, enabled);
-            UpdateFilteredList();
-            ShowToast(L"Entry updated successfully.");
-            EndDialog(hDlg, IDOK);
-            return TRUE;
-        } else if (id == IDCANCEL) {
-            EndDialog(hDlg, IDCANCEL);
-            return TRUE;
-        }
-        break;
-    }
-    }
-    return FALSE;
-}
-
-// In-memory dialog template creation helper
-static void ShowEditEntryDialog(HWND hWndParent, int itemId) {
-    g_app.activeEditId = itemId;
-
-    // Create simple dialog template in memory
-    std::vector<WORD> dlgTemplate(2048, 0);
-    LPDLGTEMPLATE pdt = (LPDLGTEMPLATE)dlgTemplate.data();
-    pdt->style = DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU;
-    pdt->dwExtendedStyle = 0;
-    pdt->cdit = 0;
-    pdt->x = 0;
-    pdt->y = 0;
-    pdt->cx = 240;
-    pdt->cy = 150;
-
-    LPWORD pw = (LPWORD)(pdt + 1);
-    *pw++ = 0; // No menu
-    *pw++ = 0; // Predefined dialog class
-    
-    // Caption
-    const wchar_t* title = L"Edit Hosts Entry";
-    while (*title) *pw++ = *title++;
-    *pw++ = 0;
-
-    // We can also create a custom modal window for edit
-    // Instead of raw memory template, let's create a custom modern Win32 popup window for editing!
-}
-
 // Custom Modal Edit Window
 static HWND g_hEditModal = NULL;
 static HWND g_hModalIp = NULL;
 static HWND g_hModalDomain = NULL;
+static HWND g_hModalGroup = NULL;
 static HWND g_hModalComment = NULL;
 static HWND g_hModalCheck = NULL;
 
@@ -253,22 +212,26 @@ static LRESULT CALLBACK ModalEditWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPA
     case WM_CREATE: {
         HFONT hFont = g_app.hFontRegular;
 
-        CreateWindowW(L"STATIC", L"IP Address:", WS_CHILD | WS_VISIBLE, 25, 20, 100, 20, hWnd, NULL, g_app.hInstance, NULL);
-        g_hModalIp = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL, 25, 42, 330, 26, hWnd, NULL, g_app.hInstance, NULL);
+        CreateWindowW(L"STATIC", L"IP Address:", WS_CHILD | WS_VISIBLE, 25, 18, 100, 18, hWnd, NULL, g_app.hInstance, NULL);
+        g_hModalIp = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL, 25, 38, 330, 24, hWnd, NULL, g_app.hInstance, NULL);
 
-        CreateWindowW(L"STATIC", L"Domain Name(s):", WS_CHILD | WS_VISIBLE, 25, 76, 120, 20, hWnd, NULL, g_app.hInstance, NULL);
-        g_hModalDomain = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL, 25, 98, 330, 26, hWnd, NULL, g_app.hInstance, NULL);
+        CreateWindowW(L"STATIC", L"Domain Name(s):", WS_CHILD | WS_VISIBLE, 25, 70, 120, 18, hWnd, NULL, g_app.hInstance, NULL);
+        g_hModalDomain = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL, 25, 90, 330, 24, hWnd, NULL, g_app.hInstance, NULL);
 
-        CreateWindowW(L"STATIC", L"Comment (Optional):", WS_CHILD | WS_VISIBLE, 25, 132, 140, 20, hWnd, NULL, g_app.hInstance, NULL);
-        g_hModalComment = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL, 25, 154, 330, 26, hWnd, NULL, g_app.hInstance, NULL);
+        CreateWindowW(L"STATIC", L"Group / Category:", WS_CHILD | WS_VISIBLE, 25, 122, 140, 18, hWnd, NULL, g_app.hInstance, NULL);
+        g_hModalGroup = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"General", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL, 25, 142, 330, 24, hWnd, NULL, g_app.hInstance, NULL);
 
-        g_hModalCheck = CreateWindowW(L"BUTTON", L"Entry is Active (Enabled)", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX | WS_TABSTOP, 25, 192, 250, 24, hWnd, NULL, g_app.hInstance, NULL);
+        CreateWindowW(L"STATIC", L"Comment (Optional):", WS_CHILD | WS_VISIBLE, 25, 174, 140, 18, hWnd, NULL, g_app.hInstance, NULL);
+        g_hModalComment = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL, 25, 194, 330, 24, hWnd, NULL, g_app.hInstance, NULL);
 
-        CreateWindowW(L"BUTTON", L"Save", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON | WS_TABSTOP, 185, 230, 80, 32, hWnd, (HMENU)IDOK, g_app.hInstance, NULL);
-        CreateWindowW(L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP, 275, 230, 80, 32, hWnd, (HMENU)IDCANCEL, g_app.hInstance, NULL);
+        g_hModalCheck = CreateWindowW(L"BUTTON", L"Entry is Active (Enabled)", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX | WS_TABSTOP, 25, 230, 250, 24, hWnd, NULL, g_app.hInstance, NULL);
+
+        CreateWindowW(L"BUTTON", L"Save", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON | WS_TABSTOP, 185, 268, 80, 32, hWnd, (HMENU)IDOK, g_app.hInstance, NULL);
+        CreateWindowW(L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP, 275, 268, 80, 32, hWnd, (HMENU)IDCANCEL, g_app.hInstance, NULL);
 
         SendMessage(g_hModalIp, WM_SETFONT, (WPARAM)hFont, TRUE);
         SendMessage(g_hModalDomain, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SendMessage(g_hModalGroup, WM_SETFONT, (WPARAM)hFont, TRUE);
         SendMessage(g_hModalComment, WM_SETFONT, (WPARAM)hFont, TRUE);
         SendMessage(g_hModalCheck, WM_SETFONT, (WPARAM)hFont, TRUE);
 
@@ -277,6 +240,7 @@ static LRESULT CALLBACK ModalEditWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPA
             if (item.id == g_app.activeEditId) {
                 SetWindowTextW(g_hModalIp, item.ip.c_str());
                 SetWindowTextW(g_hModalDomain, item.domain.c_str());
+                SetWindowTextW(g_hModalGroup, item.group.empty() ? L"General" : item.group.c_str());
                 SetWindowTextW(g_hModalComment, item.comment.c_str());
                 Button_SetCheck(g_hModalCheck, item.enabled ? BST_CHECKED : BST_UNCHECKED);
                 break;
@@ -296,9 +260,11 @@ static LRESULT CALLBACK ModalEditWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPA
         if (id == IDOK) {
             wchar_t szIp[256] = {0};
             wchar_t szDomain[1024] = {0};
+            wchar_t szGroup[256] = {0};
             wchar_t szComment[1024] = {0};
             GetWindowTextW(g_hModalIp, szIp, 256);
             GetWindowTextW(g_hModalDomain, szDomain, 1024);
+            GetWindowTextW(g_hModalGroup, szGroup, 256);
             GetWindowTextW(g_hModalComment, szComment, 1024);
             bool enabled = (Button_GetCheck(g_hModalCheck) == BST_CHECKED);
 
@@ -311,7 +277,7 @@ static LRESULT CALLBACK ModalEditWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPA
                 return 0;
             }
 
-            g_app.hosts.UpdateItem(g_app.activeEditId, szIp, szDomain, szComment);
+            g_app.hosts.UpdateItem(g_app.activeEditId, szIp, szDomain, szComment, szGroup);
             g_app.hosts.SetItemEnabled(g_app.activeEditId, enabled);
             UpdateFilteredList();
             ShowToast(L"Entry updated successfully.");
@@ -357,7 +323,7 @@ void OpenEditWindow(HWND hWndParent, int itemId) {
     RECT rcParent;
     GetWindowRect(hWndParent, &rcParent);
     int w = 395;
-    int h = 320;
+    int h = 360;
     int x = rcParent.left + (rcParent.right - rcParent.left - w) / 2;
     int y = rcParent.top + (rcParent.bottom - rcParent.top - h) / 2;
 
@@ -377,22 +343,13 @@ struct UILayout {
     int winW;
     int winH;
 
-    // Header: 0 -> 60
     int headerH;
-
-    // Add Box: 60 -> 135
     int addBoxY;
     int addBoxH;
-
-    // Filter & Search: 135 -> 180
     int filterY;
     int filterH;
-
-    // List View: 180 -> winH - 65
     int listY;
     int listH;
-
-    // Bottom Bar: winH - 65 -> winH
     int bottomY;
     int bottomH;
 };
@@ -411,6 +368,37 @@ static UILayout GetLayout(int w, int h) {
     l.listY = l.filterY + l.filterH;
     l.listH = max(100, l.bottomY - l.listY);
     return l;
+}
+
+// Show Group Filter Popup Menu
+void ShowGroupFilterMenu(HWND hWnd) {
+    auto groups = g_app.hosts.GetGroups();
+    HMENU hMenu = CreatePopupMenu();
+
+    AppendMenuW(hMenu, (g_app.selectedGroupFilter.empty() ? MF_CHECKED : MF_UNCHECKED) | MF_STRING, IDM_GROUP_FILTER_BASE, L"All Groups");
+    AppendMenuW(hMenu, MF_SEPARATOR, 0, NULL);
+
+    for (size_t i = 0; i < groups.size(); ++i) {
+        std::wstring label = groups[i] + L" (" + std::to_wstring(g_app.hosts.GetGroupCount(groups[i])) + L")";
+        UINT flags = MF_STRING;
+        if (g_app.selectedGroupFilter == groups[i]) flags |= MF_CHECKED;
+        AppendMenuW(hMenu, flags, IDM_GROUP_FILTER_BASE + 1 + (UINT)i, label.c_str());
+    }
+
+    POINT pt;
+    GetCursorPos(&pt);
+    int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_NONOTIFY, pt.x, pt.y, 0, hWnd, NULL);
+    DestroyMenu(hMenu);
+
+    if (cmd == IDM_GROUP_FILTER_BASE) {
+        g_app.selectedGroupFilter.clear();
+        UpdateFilteredList();
+        InvalidateRect(hWnd, NULL, FALSE);
+    } else if (cmd > IDM_GROUP_FILTER_BASE && cmd <= IDM_GROUP_FILTER_BASE + (int)groups.size()) {
+        g_app.selectedGroupFilter = groups[cmd - IDM_GROUP_FILTER_BASE - 1];
+        UpdateFilteredList();
+        InvalidateRect(hWnd, NULL, FALSE);
+    }
 }
 
 // Paint the entire UI in double buffer
@@ -455,7 +443,6 @@ void PaintUI(HDC hdc, const RECT& clientRect) {
 
         // Logo Icon emblem
         UITheme::DrawRoundedRect(g, Gdiplus::RectF(22, 14, 34, 34), 8.0f, UITheme::Colors::Primary, Gdiplus::Color(0, 0, 0, 0), 0);
-        // Stylized server lines inside logo
         Gdiplus::SolidBrush whiteBrush(Gdiplus::Color(255, 255, 255, 255));
         Gdiplus::SolidBrush greenDot(UITheme::Colors::ActiveGreen);
         g.FillRectangle(&whiteBrush, 29, 21, 14, 4);
@@ -469,7 +456,7 @@ void PaintUI(HDC hdc, const RECT& clientRect) {
         Gdiplus::SolidBrush textWhite(UITheme::Colors::TextPrimary);
         Gdiplus::SolidBrush textMuted(UITheme::Colors::TextSecondary);
         g.DrawString(L"HOSTAGE", -1, &fontTitle, Gdiplus::PointF(66, 13), &textWhite);
-        g.DrawString(L"Hosts File Manager & DNS Tool", -1, &fontSub, Gdiplus::PointF(67, 34), &textMuted);
+        g.DrawString(L"Hosts File Manager & Domain Groups", -1, &fontSub, Gdiplus::PointF(67, 34), &textMuted);
 
         // Badges on Header Right
         float rightX = (float)width - 24.0f;
@@ -499,9 +486,14 @@ void PaintUI(HDC hdc, const RECT& clientRect) {
         Gdiplus::RectF addBoxRect(20, (float)l.addBoxY + 8, (float)width - 40, (float)l.addBoxH - 12);
         UITheme::DrawRoundedRect(g, addBoxRect, 10.0f, UITheme::Colors::BgCard, UITheme::Colors::BorderDark, 1.0f);
 
-        // Preset pill labels: 127.0.0.1 and 0.0.0.0
+        // Preset IP & Group pill labels
         UITheme::DrawBadge(g, L"127.0.0.1", 32, (float)l.addBoxY + 16, UITheme::Colors::AccentCyan, Gdiplus::Color(255, 20, 45, 65), &fontSmall, 6, 2);
-        UITheme::DrawBadge(g, L"0.0.0.0 (AdBlock)", 105, (float)l.addBoxY + 16, UITheme::Colors::AccentAmber, Gdiplus::Color(255, 55, 40, 15), &fontSmall, 6, 2);
+        UITheme::DrawBadge(g, L"0.0.0.0", 100, (float)l.addBoxY + 16, UITheme::Colors::AccentAmber, Gdiplus::Color(255, 55, 40, 15), &fontSmall, 6, 2);
+        
+        UITheme::DrawBadge(g, L"[General]", 170, (float)l.addBoxY + 16, UITheme::Colors::TextSecondary, Gdiplus::Color(255, 36, 40, 56), &fontSmall, 6, 2);
+        UITheme::DrawBadge(g, L"[Dev]", 238, (float)l.addBoxY + 16, UITheme::Colors::PrimaryText, Gdiplus::Color(255, 67, 56, 202), &fontSmall, 6, 2);
+        UITheme::DrawBadge(g, L"[AdBlock]", 290, (float)l.addBoxY + 16, UITheme::Colors::Danger, Gdiplus::Color(255, 69, 15, 25), &fontSmall, 6, 2);
+        UITheme::DrawBadge(g, L"[Privacy]", 360, (float)l.addBoxY + 16, UITheme::Colors::ActiveGreen, Gdiplus::Color(255, 10, 60, 45), &fontSmall, 6, 2);
 
         // ----------------------------------------------------
         // 3. Search & Filter Bar
@@ -536,9 +528,23 @@ void PaintUI(HDC hdc, const RECT& clientRect) {
             return tabW;
         };
 
-        drawTab(L"All Entries", g_app.hosts.GetTotalCount(), g_app.filter == FilterMode::All, FilterMode::All);
+        drawTab(L"All", g_app.hosts.GetTotalCount(), g_app.filter == FilterMode::All, FilterMode::All);
         drawTab(L"Active", g_app.hosts.GetActiveCount(), g_app.filter == FilterMode::ActiveOnly, FilterMode::ActiveOnly);
         drawTab(L"Disabled", g_app.hosts.GetDisabledCount(), g_app.filter == FilterMode::DisabledOnly, FilterMode::DisabledOnly);
+
+        // Group Filter Button
+        float grpFilterX = tabX;
+        std::wstring grpFilterLabel = g_app.selectedGroupFilter.empty() ? L"📁 All Groups ▼" : (L"📁 " + g_app.selectedGroupFilter + L" ▼");
+        Gdiplus::RectF grpBounds;
+        g.MeasureString(grpFilterLabel.c_str(), -1, &fontBold, Gdiplus::RectF(0, 0, 500, 100), NULL, &grpBounds);
+        float grpFilterW = grpBounds.Width + 20.0f;
+        Gdiplus::RectF grpFilterRect(grpFilterX, filterY, grpFilterW, 30.0f);
+        Gdiplus::Color grpFilterBg = !g_app.selectedGroupFilter.empty() ? Gdiplus::Color(255, 67, 56, 202) : Gdiplus::Color(255, 32, 36, 52);
+        UITheme::DrawRoundedRect(g, grpFilterRect, 6.0f, grpFilterBg, UITheme::Colors::BorderDark, 1.0f);
+        Gdiplus::StringFormat sfCenter;
+        sfCenter.SetAlignment(Gdiplus::StringAlignmentCenter);
+        sfCenter.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+        g.DrawString(grpFilterLabel.c_str(), -1, &fontBold, grpFilterRect, &sfCenter, &textWhite);
 
         // Bulk action buttons on the right of filter bar
         float bulkRightX = (float)width - 24.0f;
@@ -546,9 +552,6 @@ void PaintUI(HDC hdc, const RECT& clientRect) {
         // "Disable All" button
         Gdiplus::RectF disAllRect(bulkRightX - 85, filterY, 85, 30);
         UITheme::DrawRoundedRect(g, disAllRect, 6.0f, Gdiplus::Color(255, 32, 35, 48), UITheme::Colors::BorderDark, 1.0f);
-        Gdiplus::StringFormat sfCenter;
-        sfCenter.SetAlignment(Gdiplus::StringAlignmentCenter);
-        sfCenter.SetLineAlignment(Gdiplus::StringAlignmentCenter);
         g.DrawString(L"Disable All", -1, &fontSmall, disAllRect, &sfCenter, &textMuted);
 
         // "Enable All" button
@@ -560,9 +563,11 @@ void PaintUI(HDC hdc, const RECT& clientRect) {
         // ----------------------------------------------------
         // 4. Scrollable Host Entries List
         // ----------------------------------------------------
-        int cardH = 58;
-        int cardSpacing = 8;
-        int listTotalH = (int)g_app.visibleItemIds.size() * (cardH + cardSpacing);
+        int listTotalH = 0;
+        for (const auto& r : g_app.visibleRows) {
+            listTotalH += GetRowHeight(r) + 8;
+        }
+
         g_app.maxScroll = max(0, listTotalH - l.listH);
         if (g_app.scrollOffset > g_app.maxScroll) g_app.scrollOffset = g_app.maxScroll;
         if (g_app.scrollOffset < 0) g_app.scrollOffset = 0;
@@ -571,100 +576,132 @@ void PaintUI(HDC hdc, const RECT& clientRect) {
         Gdiplus::Rect listClip(0, l.listY, width, l.listH);
         g.SetClip(listClip);
 
-        if (g_app.visibleItemIds.empty()) {
-            // Empty state message
+        if (g_app.visibleRows.empty()) {
             std::wstring emptyMsg = g_app.hosts.GetTotalCount() == 0 
                 ? L"No entries in hosts file. Use the bar above to add your first domain!"
-                : L"No host entries match your current search or filter.";
+                : L"No host entries match your current search, filter, or group.";
             Gdiplus::RectF emptyRect(20, (float)l.listY + 40, (float)width - 40, 60);
             g.DrawString(emptyMsg.c_str(), -1, &fontRegular, emptyRect, &sfCenter, &textMuted);
         } else {
             int curY = l.listY - g_app.scrollOffset;
 
-            for (size_t i = 0; i < g_app.visibleItemIds.size(); ++i) {
-                int itemId = g_app.visibleItemIds[i];
+            for (size_t i = 0; i < g_app.visibleRows.size(); ++i) {
+                const auto& row = g_app.visibleRows[i];
+                int rHeight = GetRowHeight(row);
 
-                // Check visibility within clip
-                if (curY + cardH >= l.listY && curY <= l.listY + l.listH) {
-                    // Find item
-                    const HostItem* pItem = nullptr;
-                    for (const auto& item : g_app.hosts.GetItems()) {
-                        if (item.id == itemId) {
-                            pItem = &item;
-                            break;
-                        }
-                    }
+                if (curY + rHeight >= l.listY && curY <= l.listY + l.listH) {
+                    bool isHovered = ((int)i == g_app.hoveredRowIndex);
+                    float cardW = (float)width - 48.0f;
 
-                    if (pItem) {
-                        bool isHovered = ((int)i == g_app.hoveredItemIndex);
-                        float cardW = (float)width - 48.0f;
-                        Gdiplus::RectF cardRect(20.0f, (float)curY, cardW, (float)cardH);
+                    if (row.type == ListRowType::GroupHeader) {
+                        // Section Group Header
+                        Gdiplus::RectF grpRect(20.0f, (float)curY, cardW, (float)rHeight);
+                        UITheme::DrawRoundedRect(g, grpRect, 6.0f, Gdiplus::Color(255, 24, 28, 40), UITheme::Colors::BorderDark, 1.0f);
 
-                        Gdiplus::Color cardBg = isHovered ? UITheme::Colors::BgCardHover : UITheme::Colors::BgCard;
-                        Gdiplus::Color cardBorder = isHovered ? UITheme::Colors::BorderFocus : UITheme::Colors::BorderDark;
-                        UITheme::DrawRoundedRect(g, cardRect, 8.0f, cardBg, cardBorder, 1.0f);
+                        // Icon and Name
+                        std::wstring grpText = L"📁  " + row.groupName;
+                        g.DrawString(grpText.c_str(), -1, &fontBold, Gdiplus::PointF(32, (float)curY + 9.0f), &textWhite);
 
-                        // Toggle Switch
-                        float toggleX = 34.0f;
-                        float toggleY = (float)curY + ((float)cardH - 22.0f) / 2.0f;
-                        bool toggleHover = (isHovered && g_app.hoveredButton == 1);
-                        UITheme::DrawToggleSwitch(g, toggleX, toggleY, 40.0f, 22.0f, pItem->enabled, toggleHover);
+                        // Count badge
+                        size_t totalInGrp = g_app.hosts.GetGroupCount(row.groupName);
+                        size_t activeInGrp = g_app.hosts.GetGroupActiveCount(row.groupName);
+                        std::wstringstream gss;
+                        gss << totalInGrp << L" entries (" << activeInGrp << L" active)";
+                        UITheme::DrawBadge(g, gss.str(), 60.0f + (float)row.groupName.size() * 9.5f, (float)curY + 7.0f, UITheme::Colors::TextSecondary, Gdiplus::Color(255, 34, 38, 54), &fontSmall, 6, 2);
 
-                        // Status Badge
-                        float badgeX = toggleX + 50.0f;
-                        float badgeY = (float)curY + ((float)cardH - 20.0f) / 2.0f;
-                        if (pItem->enabled) {
-                            UITheme::DrawBadge(g, L"ACTIVE", badgeX, badgeY, UITheme::Colors::ActiveGreen, UITheme::Colors::ActiveGreenBg, &fontBadge, 7, 2);
-                        } else {
-                            UITheme::DrawBadge(g, L"DISABLED", badgeX, badgeY, UITheme::Colors::DisabledGray, UITheme::Colors::DisabledGrayBg, &fontBadge, 7, 2);
-                        }
+                        // Toggle Group Button
+                        float togW = 95.0f;
+                        float togH = 24.0f;
+                        float togX = (grpRect.X + grpRect.Width) - togW - 8.0f;
+                        float togY = (float)curY + 6.0f;
+                        bool togHover = (isHovered && g_app.hoveredButton == 4);
+                        Gdiplus::Color togBg = togHover ? UITheme::Colors::PrimaryHover : Gdiplus::Color(255, 36, 40, 56);
+                        UITheme::DrawRoundedRect(g, Gdiplus::RectF(togX, togY, togW, togH), 4.0f, togBg, UITheme::Colors::BorderDark, 1.0f);
+                        g.DrawString(L"Toggle Group", -1, &fontSmall, Gdiplus::RectF(togX, togY, togW, togH), &sfCenter, &textWhite);
 
-                        // IP Address badge/pill
-                        float ipX = badgeX + 75.0f;
-                        float ipY = (float)curY + ((float)cardH - 22.0f) / 2.0f;
-                        UITheme::DrawBadge(g, pItem->ip, ipX, ipY, UITheme::Colors::AccentCyan, Gdiplus::Color(255, 18, 32, 46), &fontMono, 8, 3);
-
-                        // Domain Name
-                        float domX = ipX + 130.0f;
-                        float domY = (float)curY + 12.0f;
-                        Gdiplus::SolidBrush domBrush(pItem->enabled ? UITheme::Colors::TextPrimary : UITheme::Colors::TextMuted);
-                        g.DrawString(pItem->domain.c_str(), -1, &fontDomain, Gdiplus::PointF(domX, domY), &domBrush);
-
-                        // Comment if any
-                        if (!pItem->comment.empty()) {
-                            std::wstring comStr = L"# " + pItem->comment;
-                            g.DrawString(comStr.c_str(), -1, &fontSmall, Gdiplus::PointF(domX, domY + 18.0f), &textMuted);
+                    } else if (row.type == ListRowType::HostCard) {
+                        // Host Entry Card
+                        const HostItem* pItem = nullptr;
+                        for (const auto& item : g_app.hosts.GetItems()) {
+                            if (item.id == row.hostItemId) {
+                                pItem = &item;
+                                break;
+                            }
                         }
 
-                        // Action Buttons on Right: Edit & Delete
-                        float btnRight = (cardRect.X + cardRect.Width) - 14.0f;
+                        if (pItem) {
+                            Gdiplus::RectF cardRect(20.0f, (float)curY, cardW, (float)rHeight);
+                            Gdiplus::Color cardBg = isHovered ? UITheme::Colors::BgCardHover : UITheme::Colors::BgCard;
+                            Gdiplus::Color cardBorder = isHovered ? UITheme::Colors::BorderFocus : UITheme::Colors::BorderDark;
+                            UITheme::DrawRoundedRect(g, cardRect, 8.0f, cardBg, cardBorder, 1.0f);
 
-                        // Delete button
-                        float delW = 60.0f;
-                        float delH = 28.0f;
-                        float delX = btnRight - delW;
-                        float delY = (float)curY + ((float)cardH - delH) / 2.0f;
-                        bool delHover = (isHovered && g_app.hoveredButton == 3);
-                        Gdiplus::Color delBg = delHover ? UITheme::Colors::Danger : Gdiplus::Color(255, 38, 26, 32);
-                        Gdiplus::Color delText = delHover ? Gdiplus::Color(255, 255, 255, 255) : UITheme::Colors::Danger;
-                        UITheme::DrawRoundedRect(g, Gdiplus::RectF(delX, delY, delW, delH), 5.0f, delBg, UITheme::Colors::BorderDark, 1.0f);
-                        Gdiplus::SolidBrush delTextB(delText);
-                        g.DrawString(L"Delete", -1, &fontSmall, Gdiplus::RectF(delX, delY, delW, delH), &sfCenter, &delTextB);
+                            // Toggle Switch
+                            float toggleX = 34.0f;
+                            float toggleY = (float)curY + ((float)rHeight - 22.0f) / 2.0f;
+                            bool toggleHover = (isHovered && g_app.hoveredButton == 1);
+                            UITheme::DrawToggleSwitch(g, toggleX, toggleY, 40.0f, 22.0f, pItem->enabled, toggleHover);
 
-                        // Edit button
-                        float editW = 55.0f;
-                        float editH = 28.0f;
-                        float editX = delX - editW - 8.0f;
-                        float editY = delY;
-                        bool editHover = (isHovered && g_app.hoveredButton == 2);
-                        Gdiplus::Color editBg = editHover ? UITheme::Colors::Primary : Gdiplus::Color(255, 32, 36, 50);
-                        Gdiplus::Color editText = editHover ? Gdiplus::Color(255, 255, 255, 255) : UITheme::Colors::TextSecondary;
-                        UITheme::DrawRoundedRect(g, Gdiplus::RectF(editX, editY, editW, editH), 5.0f, editBg, UITheme::Colors::BorderDark, 1.0f);
-                        Gdiplus::SolidBrush editTextB(editText);
-                        g.DrawString(L"Edit", -1, &fontSmall, Gdiplus::RectF(editX, editY, editW, editH), &sfCenter, &editTextB);
+                            // Status Badge
+                            float badgeX = toggleX + 50.0f;
+                            float badgeY = (float)curY + ((float)rHeight - 20.0f) / 2.0f;
+                            if (pItem->enabled) {
+                                UITheme::DrawBadge(g, L"ACTIVE", badgeX, badgeY, UITheme::Colors::ActiveGreen, UITheme::Colors::ActiveGreenBg, &fontBadge, 7, 2);
+                            } else {
+                                UITheme::DrawBadge(g, L"DISABLED", badgeX, badgeY, UITheme::Colors::DisabledGray, UITheme::Colors::DisabledGrayBg, &fontBadge, 7, 2);
+                            }
+
+                            // IP Address badge/pill
+                            float ipX = badgeX + 75.0f;
+                            float ipY = (float)curY + ((float)rHeight - 22.0f) / 2.0f;
+                            UITheme::DrawBadge(g, pItem->ip, ipX, ipY, UITheme::Colors::AccentCyan, Gdiplus::Color(255, 18, 32, 46), &fontMono, 8, 3);
+
+                            // Group Pill Badge
+                            float grpBadgeX = ipX + 130.0f;
+                            std::wstring grpText = pItem->group.empty() ? L"General" : pItem->group;
+                            UITheme::DrawBadge(g, grpText, grpBadgeX, ipY, UITheme::Colors::PrimaryText, Gdiplus::Color(255, 67, 56, 202), &fontBadge, 7, 2);
+
+                            // Domain Name
+                            float domX = grpBadgeX + (float)grpText.size() * 8.0f + 25.0f;
+                            float domY = (float)curY + 12.0f;
+                            Gdiplus::SolidBrush domBrush(pItem->enabled ? UITheme::Colors::TextPrimary : UITheme::Colors::TextMuted);
+                            g.DrawString(pItem->domain.c_str(), -1, &fontDomain, Gdiplus::PointF(domX, domY), &domBrush);
+
+                            // Comment if any
+                            if (!pItem->comment.empty()) {
+                                std::wstring comStr = L"# " + pItem->comment;
+                                g.DrawString(comStr.c_str(), -1, &fontSmall, Gdiplus::PointF(domX, domY + 18.0f), &textMuted);
+                            }
+
+                            // Action Buttons on Right: Edit & Delete
+                            float btnRight = (cardRect.X + cardRect.Width) - 14.0f;
+
+                            // Delete button
+                            float delW = 60.0f;
+                            float delH = 28.0f;
+                            float delX = btnRight - delW;
+                            float delY = (float)curY + ((float)rHeight - delH) / 2.0f;
+                            bool delHover = (isHovered && g_app.hoveredButton == 3);
+                            Gdiplus::Color delBg = delHover ? UITheme::Colors::Danger : Gdiplus::Color(255, 38, 26, 32);
+                            Gdiplus::Color delText = delHover ? Gdiplus::Color(255, 255, 255, 255) : UITheme::Colors::Danger;
+                            UITheme::DrawRoundedRect(g, Gdiplus::RectF(delX, delY, delW, delH), 5.0f, delBg, UITheme::Colors::BorderDark, 1.0f);
+                            Gdiplus::SolidBrush delTextB(delText);
+                            g.DrawString(L"Delete", -1, &fontSmall, Gdiplus::RectF(delX, delY, delW, delH), &sfCenter, &delTextB);
+
+                            // Edit button
+                            float editW = 55.0f;
+                            float editH = 28.0f;
+                            float editX = delX - editW - 8.0f;
+                            float editY = delY;
+                            bool editHover = (isHovered && g_app.hoveredButton == 2);
+                            Gdiplus::Color editBg = editHover ? UITheme::Colors::Primary : Gdiplus::Color(255, 32, 36, 50);
+                            Gdiplus::Color editText = editHover ? Gdiplus::Color(255, 255, 255, 255) : UITheme::Colors::TextSecondary;
+                            UITheme::DrawRoundedRect(g, Gdiplus::RectF(editX, editY, editW, editH), 5.0f, editBg, UITheme::Colors::BorderDark, 1.0f);
+                            Gdiplus::SolidBrush editTextB(editText);
+                            g.DrawString(L"Edit", -1, &fontSmall, Gdiplus::RectF(editX, editY, editW, editH), &sfCenter, &editTextB);
+                        }
                     }
                 }
-                curY += cardH + cardSpacing;
+                curY += rHeight + 8;
             }
         }
 
@@ -769,33 +806,56 @@ void PaintUI(HDC hdc, const RECT& clientRect) {
 void RepositionControls(int width, int height) {
     UILayout l = GetLayout(width, height);
 
-    // IP field: x=30, y=l.addBoxY + 38, w=150, h=26
+    // Inputs inside Quick Add Bar
     int ipX = 30;
     int ipY = l.addBoxY + 38;
-    int ipW = 140;
+    int ipW = 120;
     int inputH = 26;
     MoveWindow(g_app.hEditIp, ipX, ipY, ipW, inputH, TRUE);
 
-    // Domain field: x=180, w=max(200, (width - 40 - 180 - 240 - 110))
-    int domX = ipX + ipW + 10;
-    int btnW = 110;
-    int commentW = 200;
-    int domW = max(180, width - 40 - domX - commentW - btnW - 20);
+    int grpW = 110;
+    int commentW = 160;
+    int btnW = 105;
+
+    int domX = ipX + ipW + 8;
+    int domW = max(150, width - 40 - domX - grpW - commentW - btnW - 32);
     MoveWindow(g_app.hEditDomain, domX, ipY, domW, inputH, TRUE);
 
-    // Comment field
-    int comX = domX + domW + 10;
+    int grpX = domX + domW + 8;
+    MoveWindow(g_app.hEditGroup, grpX, ipY, grpW, inputH, TRUE);
+
+    int comX = grpX + grpW + 8;
     MoveWindow(g_app.hEditComment, comX, ipY, commentW, inputH, TRUE);
 
-    // Add Button
-    int addX = comX + commentW + 10;
+    int addX = comX + commentW + 8;
     MoveWindow(g_app.hBtnAdd, addX, ipY - 1, btnW, inputH + 2, TRUE);
 
     // Search Box (placed on right side of Filter Bar)
-    int searchW = 240;
-    int searchX = width - 24 - 180 - searchW - 10; // Left of Bulk Action buttons
+    int searchW = 220;
+    int searchX = width - 24 - 180 - searchW - 10;
     int searchY = l.filterY + 8;
     MoveWindow(g_app.hEditSearch, searchX, searchY, searchW, 26, TRUE);
+}
+
+// Helper to find row at (x, y)
+static int FindRowIndexAt(int y, int listY, int scrollOffset) {
+    int curY = listY - scrollOffset;
+    for (size_t i = 0; i < g_app.visibleRows.size(); ++i) {
+        int rH = GetRowHeight(g_app.visibleRows[i]);
+        if (y >= curY && y <= curY + rH) {
+            return (int)i;
+        }
+        curY += rH + 8;
+    }
+    return -1;
+}
+
+static int GetRowTopY(int index, int listY, int scrollOffset) {
+    int curY = listY - scrollOffset;
+    for (int i = 0; i < index; ++i) {
+        curY += GetRowHeight(g_app.visibleRows[i]) + 8;
+    }
+    return curY;
 }
 
 // Handle Mouse Click in UI
@@ -812,38 +872,56 @@ void HandleMouseClick(int x, int y) {
             SetWindowTextW(g_app.hEditIp, L"127.0.0.1");
             SetFocus(g_app.hEditDomain);
             return;
-        } else if (x >= 105 && x <= 225) {
+        } else if (x >= 100 && x <= 165) {
             SetWindowTextW(g_app.hEditIp, L"0.0.0.0");
+            SetFocus(g_app.hEditDomain);
+            return;
+        } else if (x >= 170 && x <= 230) {
+            SetWindowTextW(g_app.hEditGroup, L"General");
+            SetFocus(g_app.hEditDomain);
+            return;
+        } else if (x >= 238 && x <= 285) {
+            SetWindowTextW(g_app.hEditGroup, L"Dev");
+            SetFocus(g_app.hEditDomain);
+            return;
+        } else if (x >= 290 && x <= 355) {
+            SetWindowTextW(g_app.hEditGroup, L"AdBlock");
+            SetFocus(g_app.hEditDomain);
+            return;
+        } else if (x >= 360 && x <= 430) {
+            SetWindowTextW(g_app.hEditGroup, L"Privacy");
             SetFocus(g_app.hEditDomain);
             return;
         }
     }
 
-    // Filter tabs click
+    // Filter tabs & Group Selector click
     if (y >= l.filterY + 6 && y <= l.filterY + 36) {
-        float tabX = 20.0f;
         // Tab All
-        if (x >= 20 && x <= 140) {
+        if (x >= 20 && x <= 80) {
             g_app.filter = FilterMode::All;
             UpdateFilteredList();
             InvalidateRect(g_app.hWndMain, NULL, FALSE);
             return;
-        } else if (x >= 148 && x <= 250) {
+        } else if (x >= 88 && x <= 165) {
             g_app.filter = FilterMode::ActiveOnly;
             UpdateFilteredList();
             InvalidateRect(g_app.hWndMain, NULL, FALSE);
             return;
-        } else if (x >= 258 && x <= 370) {
+        } else if (x >= 173 && x <= 265) {
             g_app.filter = FilterMode::DisabledOnly;
             UpdateFilteredList();
             InvalidateRect(g_app.hWndMain, NULL, FALSE);
+            return;
+        } else if (x >= 273 && x <= 430) {
+            // Group Filter dropdown
+            ShowGroupFilterMenu(g_app.hWndMain);
             return;
         }
 
         // Bulk action buttons
         float bulkRightX = (float)width - 24.0f;
         if (x >= bulkRightX - 85 && x <= bulkRightX) {
-            // Disable All
             g_app.hosts.SetAllEnabled(false);
             UpdateFilteredList();
             ShowToast(L"All entries set to Disabled.");
@@ -851,7 +929,6 @@ void HandleMouseClick(int x, int y) {
         }
         bulkRightX -= 95.0f;
         if (x >= bulkRightX - 85 && x <= bulkRightX) {
-            // Enable All
             g_app.hosts.SetAllEnabled(true);
             UpdateFilteredList();
             ShowToast(L"All entries set to Enabled.");
@@ -859,46 +936,56 @@ void HandleMouseClick(int x, int y) {
         }
     }
 
-    // List Item click (Toggles, Edit, Delete)
+    // List Item click
     if (y >= l.listY && y <= l.bottomY) {
-        int cardH = 58;
-        int cardSpacing = 8;
-        int relativeY = y - l.listY + g_app.scrollOffset;
-        int index = relativeY / (cardH + cardSpacing);
-        int remY = relativeY % (cardH + cardSpacing);
-
-        if (index >= 0 && index < (int)g_app.visibleItemIds.size() && remY <= cardH) {
-            int itemId = g_app.visibleItemIds[index];
+        int rowIndex = FindRowIndexAt(y, l.listY, g_app.scrollOffset);
+        if (rowIndex >= 0 && rowIndex < (int)g_app.visibleRows.size()) {
+            const auto& row = g_app.visibleRows[rowIndex];
+            int rowY = GetRowTopY(rowIndex, l.listY, g_app.scrollOffset);
             float cardW = (float)width - 48.0f;
-            float btnRight = 20.0f + cardW - 14.0f;
 
-            float delW = 60.0f;
-            float delX = btnRight - delW;
-            float editW = 55.0f;
-            float editX = delX - editW - 8.0f;
-
-            // Check Delete button
-            if (x >= delX && x <= delX + delW) {
-                if (MessageBoxW(g_app.hWndMain, L"Are you sure you want to delete this host entry?", L"Confirm Delete", MB_YESNO | MB_ICONQUESTION) == IDYES) {
-                    g_app.hosts.DeleteItem(itemId);
+            if (row.type == ListRowType::GroupHeader) {
+                // Group Toggle button
+                float togW = 95.0f;
+                float togX = (20.0f + cardW) - togW - 8.0f;
+                if (x >= togX && x <= togX + togW) {
+                    g_app.hosts.ToggleGroup(row.groupName);
                     UpdateFilteredList();
-                    ShowToast(L"Entry deleted.");
+                    ShowToast(L"Toggled group: " + row.groupName);
+                    InvalidateRect(g_app.hWndMain, NULL, FALSE);
+                    return;
                 }
-                return;
-            }
+            } else if (row.type == ListRowType::HostCard) {
+                int itemId = row.hostItemId;
+                float btnRight = 20.0f + cardW - 14.0f;
+                float delW = 60.0f;
+                float delX = btnRight - delW;
+                float editW = 55.0f;
+                float editX = delX - editW - 8.0f;
 
-            // Check Edit button
-            if (x >= editX && x <= editX + editW) {
-                OpenEditWindow(g_app.hWndMain, itemId);
-                return;
-            }
+                // Delete button
+                if (x >= delX && x <= delX + delW) {
+                    if (MessageBoxW(g_app.hWndMain, L"Are you sure you want to delete this host entry?", L"Confirm Delete", MB_YESNO | MB_ICONQUESTION) == IDYES) {
+                        g_app.hosts.DeleteItem(itemId);
+                        UpdateFilteredList();
+                        ShowToast(L"Entry deleted.");
+                    }
+                    return;
+                }
 
-            // Check Toggle Switch or card area click
-            if (x >= 20 && x <= 180) {
-                g_app.hosts.ToggleItem(itemId);
-                UpdateFilteredList();
-                InvalidateRect(g_app.hWndMain, NULL, FALSE);
-                return;
+                // Edit button
+                if (x >= editX && x <= editX + editW) {
+                    OpenEditWindow(g_app.hWndMain, itemId);
+                    return;
+                }
+
+                // Toggle Switch or left card click
+                if (x >= 20 && x <= 180) {
+                    g_app.hosts.ToggleItem(itemId);
+                    UpdateFilteredList();
+                    InvalidateRect(g_app.hWndMain, NULL, FALSE);
+                    return;
+                }
             }
         }
     }
@@ -907,7 +994,6 @@ void HandleMouseClick(int x, int y) {
     if (y >= l.bottomY + 13 && y <= l.bottomY + 51) {
         float actionRightX = (float)width - 24.0f;
         
-        // Save button
         float saveW = 190.0f;
         float saveX = actionRightX - saveW;
         if (x >= saveX && x <= saveX + saveW) {
@@ -915,7 +1001,6 @@ void HandleMouseClick(int x, int y) {
             return;
         }
 
-        // Flush DNS button
         actionRightX -= saveW + 10.0f;
         float flushW = 100.0f;
         float flushX = actionRightX - flushW;
@@ -924,7 +1009,6 @@ void HandleMouseClick(int x, int y) {
             return;
         }
 
-        // Backups button
         actionRightX -= flushW + 10.0f;
         float bakW = 85.0f;
         float bakX = actionRightX - bakW;
@@ -933,7 +1017,6 @@ void HandleMouseClick(int x, int y) {
             return;
         }
 
-        // Notepad button
         actionRightX -= bakW + 10.0f;
         float npW = 80.0f;
         float npX = actionRightX - npW;
@@ -942,7 +1025,6 @@ void HandleMouseClick(int x, int y) {
             return;
         }
 
-        // Reload button
         actionRightX -= npW + 10.0f;
         float relW = 75.0f;
         float relX = actionRightX - relW;
@@ -961,38 +1043,42 @@ void HandleMouseMove(int x, int y) {
     int height = rc.bottom - rc.top;
     UILayout l = GetLayout(width, height);
 
-    int prevHoveredItem = g_app.hoveredItemIndex;
+    int prevHoveredRow = g_app.hoveredRowIndex;
     int prevHoveredBtn = g_app.hoveredButton;
     int prevBottomBtn = g_app.hoveredBottomBtn;
 
-    g_app.hoveredItemIndex = -1;
+    g_app.hoveredRowIndex = -1;
     g_app.hoveredButton = 0;
     g_app.hoveredBottomBtn = 0;
 
     // Check list item hover
     if (y >= l.listY && y <= l.bottomY) {
-        int cardH = 58;
-        int cardSpacing = 8;
-        int relativeY = y - l.listY + g_app.scrollOffset;
-        int index = relativeY / (cardH + cardSpacing);
-        int remY = relativeY % (cardH + cardSpacing);
-
-        if (index >= 0 && index < (int)g_app.visibleItemIds.size() && remY <= cardH) {
-            g_app.hoveredItemIndex = index;
+        int rowIndex = FindRowIndexAt(y, l.listY, g_app.scrollOffset);
+        if (rowIndex >= 0 && rowIndex < (int)g_app.visibleRows.size()) {
+            g_app.hoveredRowIndex = rowIndex;
+            const auto& row = g_app.visibleRows[rowIndex];
             float cardW = (float)width - 48.0f;
-            float btnRight = 20.0f + cardW - 14.0f;
 
-            float delW = 60.0f;
-            float delX = btnRight - delW;
-            float editW = 55.0f;
-            float editX = delX - editW - 8.0f;
+            if (row.type == ListRowType::GroupHeader) {
+                float togW = 95.0f;
+                float togX = (20.0f + cardW) - togW - 8.0f;
+                if (x >= togX && x <= togX + togW) {
+                    g_app.hoveredButton = 4; // GroupToggle
+                }
+            } else if (row.type == ListRowType::HostCard) {
+                float btnRight = 20.0f + cardW - 14.0f;
+                float delW = 60.0f;
+                float delX = btnRight - delW;
+                float editW = 55.0f;
+                float editX = delX - editW - 8.0f;
 
-            if (x >= 34.0f && x <= 74.0f) {
-                g_app.hoveredButton = 1; // Toggle
-            } else if (x >= editX && x <= editX + editW) {
-                g_app.hoveredButton = 2; // Edit
-            } else if (x >= delX && x <= delX + delW) {
-                g_app.hoveredButton = 3; // Delete
+                if (x >= 34.0f && x <= 74.0f) {
+                    g_app.hoveredButton = 1; // Toggle
+                } else if (x >= editX && x <= editX + editW) {
+                    g_app.hoveredButton = 2; // Edit
+                } else if (x >= delX && x <= delX + delW) {
+                    g_app.hoveredButton = 3; // Delete
+                }
             }
         }
     }
@@ -1035,7 +1121,7 @@ void HandleMouseMove(int x, int y) {
         }
     }
 
-    if (prevHoveredItem != g_app.hoveredItemIndex || prevHoveredBtn != g_app.hoveredButton || prevBottomBtn != g_app.hoveredBottomBtn) {
+    if (prevHoveredRow != g_app.hoveredRowIndex || prevHoveredBtn != g_app.hoveredButton || prevBottomBtn != g_app.hoveredBottomBtn) {
         InvalidateRect(g_app.hWndMain, NULL, FALSE);
     }
 }
@@ -1101,24 +1187,28 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         // Controls
         g_app.hEditIp = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"127.0.0.1", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL, 0, 0, 100, 24, hWnd, (HMENU)IDC_EDIT_IP, g_app.hInstance, NULL);
         g_app.hEditDomain = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL, 0, 0, 100, 24, hWnd, (HMENU)IDC_EDIT_DOMAIN, g_app.hInstance, NULL);
+        g_app.hEditGroup = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"General", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL, 0, 0, 100, 24, hWnd, (HMENU)IDC_EDIT_GROUP, g_app.hInstance, NULL);
         g_app.hEditComment = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL, 0, 0, 100, 24, hWnd, (HMENU)IDC_EDIT_COMMENT, g_app.hInstance, NULL);
         g_app.hBtnAdd = CreateWindowW(L"BUTTON", L"+ Add Entry", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON | WS_TABSTOP, 0, 0, 100, 24, hWnd, (HMENU)IDC_BTN_ADD, g_app.hInstance, NULL);
         g_app.hEditSearch = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL, 0, 0, 100, 24, hWnd, (HMENU)IDC_EDIT_SEARCH, g_app.hInstance, NULL);
 
         SendMessage(g_app.hEditIp, WM_SETFONT, (WPARAM)g_app.hFontRegular, TRUE);
         SendMessage(g_app.hEditDomain, WM_SETFONT, (WPARAM)g_app.hFontRegular, TRUE);
+        SendMessage(g_app.hEditGroup, WM_SETFONT, (WPARAM)g_app.hFontRegular, TRUE);
         SendMessage(g_app.hEditComment, WM_SETFONT, (WPARAM)g_app.hFontRegular, TRUE);
         SendMessage(g_app.hBtnAdd, WM_SETFONT, (WPARAM)g_app.hFontBold, TRUE);
         SendMessage(g_app.hEditSearch, WM_SETFONT, (WPARAM)g_app.hFontRegular, TRUE);
 
         // Cue banners (placeholders)
-        SendMessageW(g_app.hEditDomain, 0x1501 /*EM_SETCUEBANNER*/, TRUE, (LPARAM)L"Domain (e.g. adserver.com)");
+        SendMessageW(g_app.hEditDomain, 0x1501 /*EM_SETCUEBANNER*/, TRUE, (LPARAM)L"Domain (e.g. site.local)");
+        SendMessageW(g_app.hEditGroup, 0x1501 /*EM_SETCUEBANNER*/, TRUE, (LPARAM)L"Group (e.g. Dev)");
         SendMessageW(g_app.hEditComment, 0x1501 /*EM_SETCUEBANNER*/, TRUE, (LPARAM)L"Comment (optional)");
-        SendMessageW(g_app.hEditSearch, 0x1501 /*EM_SETCUEBANNER*/, TRUE, (LPARAM)L"Search domains, IPs, comments...");
+        SendMessageW(g_app.hEditSearch, 0x1501 /*EM_SETCUEBANNER*/, TRUE, (LPARAM)L"Search domains, IPs, groups...");
 
         // Subclass edit controls
         g_OldEditProc = (WNDPROC)SetWindowLongPtrW(g_app.hEditDomain, GWLP_WNDPROC, (LONG_PTR)DarkEditProc);
         SetWindowLongPtrW(g_app.hEditIp, GWLP_WNDPROC, (LONG_PTR)DarkEditProc);
+        SetWindowLongPtrW(g_app.hEditGroup, GWLP_WNDPROC, (LONG_PTR)DarkEditProc);
         SetWindowLongPtrW(g_app.hEditComment, GWLP_WNDPROC, (LONG_PTR)DarkEditProc);
 
         // Load hosts file
@@ -1140,8 +1230,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
     case WM_GETMINMAXINFO: {
         LPMINMAXINFO lpMMI = (LPMINMAXINFO)lParam;
-        lpMMI->ptMinTrackSize.x = 760;
-        lpMMI->ptMinTrackSize.y = 480;
+        lpMMI->ptMinTrackSize.x = 820;
+        lpMMI->ptMinTrackSize.y = 500;
         return 0;
     }
 
@@ -1180,7 +1270,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     }
 
     case WM_MOUSELEAVE: {
-        g_app.hoveredItemIndex = -1;
+        g_app.hoveredRowIndex = -1;
         g_app.hoveredButton = 0;
         g_app.hoveredBottomBtn = 0;
         InvalidateRect(hWnd, NULL, FALSE);
@@ -1212,9 +1302,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (id == IDC_BTN_ADD) {
             wchar_t szIp[256] = {0};
             wchar_t szDomain[1024] = {0};
+            wchar_t szGroup[256] = {0};
             wchar_t szComment[1024] = {0};
             GetWindowTextW(g_app.hEditIp, szIp, 256);
             GetWindowTextW(g_app.hEditDomain, szDomain, 1024);
+            GetWindowTextW(g_app.hEditGroup, szGroup, 256);
             GetWindowTextW(g_app.hEditComment, szComment, 1024);
 
             if (!HostsManager::IsValidIp(szIp)) {
@@ -1228,12 +1320,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 return 0;
             }
 
-            g_app.hosts.AddItem(szIp, szDomain, szComment, true);
+            std::wstring grp = (szGroup[0] == L'\0') ? L"General" : szGroup;
+            g_app.hosts.AddItem(szIp, szDomain, szComment, grp, true);
             UpdateFilteredList();
             SetWindowTextW(g_app.hEditDomain, L"");
             SetWindowTextW(g_app.hEditComment, L"");
             SetFocus(g_app.hEditDomain);
-            ShowToast(L"Entry added to hosts list.");
+            ShowToast(L"Entry added to group [" + grp + L"].");
             return 0;
         }
 
@@ -1281,7 +1374,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_CTLCOLOREDIT: {
         HDC hdc = (HDC)wParam;
         HWND hCtl = (HWND)lParam;
-        if (hCtl == g_app.hEditIp || hCtl == g_app.hEditDomain || hCtl == g_app.hEditComment || hCtl == g_app.hEditSearch) {
+        if (hCtl == g_app.hEditIp || hCtl == g_app.hEditDomain || hCtl == g_app.hEditGroup || hCtl == g_app.hEditComment || hCtl == g_app.hEditSearch) {
             SetTextColor(hdc, RGB(241, 245, 249));
             SetBkColor(hdc, RGB(21, 23, 32));
             static HBRUSH hbrInput = CreateSolidBrush(RGB(21, 23, 32));
@@ -1322,7 +1415,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     g_app.hInstance = hInstance;
     g_app.filter = FilterMode::All;
     g_app.scrollOffset = 0;
-    g_app.hoveredItemIndex = -1;
+    g_app.hoveredRowIndex = -1;
     g_app.hoveredButton = 0;
     g_app.hoveredBottomBtn = 0;
 
@@ -1374,8 +1467,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     }
 
     // Default window dimensions
-    int defaultW = 920;
-    int defaultH = 640;
+    int defaultW = 960;
+    int defaultH = 650;
     int screenW = GetSystemMetrics(SM_CXSCREEN);
     int screenH = GetSystemMetrics(SM_CYSCREEN);
     int posX = max(50, (screenW - defaultW) / 2);

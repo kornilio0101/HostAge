@@ -139,18 +139,79 @@ bool HostsManager::TryParseHostLine(const std::wstring& line, HostItem& outItem,
     return true;
 }
 
+static bool TryExtractGroupHeader(const std::wstring& line, std::wstring& outGroupName) {
+    std::wstring s = Trim(line);
+    if (s.empty() || s[0] != L'#') return false;
+
+    // Remove leading # and spaces
+    size_t i = 1;
+    while (i < s.size() && (s[i] == L'#' || std::iswspace(s[i]))) i++;
+    std::wstring content = Trim(s.substr(i));
+    if (content.empty()) return false;
+
+    // Pattern 1: [GroupName]
+    if (content.size() >= 3 && content.front() == L'[' && content.back() == L']') {
+        std::wstring g = Trim(content.substr(1, content.size() - 2));
+        if (!g.empty() && g.size() < 40) {
+            outGroupName = g;
+            return true;
+        }
+    }
+    // Pattern 2: === GroupName === or --- GroupName ---
+    if ((content.rfind(L"===", 0) == 0 && content.size() > 6) ||
+        (content.rfind(L"---", 0) == 0 && content.size() > 6)) {
+        size_t start = content.find_first_not_of(L"=- ");
+        size_t end = content.find_last_not_of(L"=- ");
+        if (start != std::wstring::npos && end != std::wstring::npos && end >= start) {
+            std::wstring g = Trim(content.substr(start, end - start + 1));
+            if (!g.empty() && g.size() < 40) {
+                outGroupName = g;
+                return true;
+            }
+        }
+    }
+    // Pattern 3: Group: GroupName
+    if (content.rfind(L"Group:", 0) == 0 || content.rfind(L"group:", 0) == 0) {
+        std::wstring g = Trim(content.substr(6));
+        if (!g.empty() && g.size() < 40) {
+            outGroupName = g;
+            return true;
+        }
+    }
+
+    return false;
+}
+
 void HostsManager::ParseLines(const std::vector<std::wstring>& rawLines) {
     m_items.clear();
     m_lines.clear();
 
+    std::wstring currentGroup = L"General";
+
     for (size_t i = 0; i < rawLines.size(); ++i) {
         const auto& line = rawLines[i];
+        
+        std::wstring headerGroup;
+        if (TryExtractGroupHeader(line, headerGroup)) {
+            currentGroup = headerGroup;
+        }
+
         HostItem item;
         bool wasCommented = false;
 
         if (TryParseHostLine(line, item, wasCommented)) {
             item.id = m_nextId++;
             item.lineIndex = i;
+
+            // Check if comment has [Group] tag
+            if (!item.comment.empty() && item.comment.front() == L'[' && item.comment.find(L']') != std::wstring::npos) {
+                size_t closeP = item.comment.find(L']');
+                item.group = Trim(item.comment.substr(1, closeP - 1));
+                item.comment = Trim(item.comment.substr(closeP + 1));
+            } else {
+                item.group = currentGroup;
+            }
+
             m_items.push_back(item);
 
             FileLine fl;
@@ -321,8 +382,16 @@ bool HostsManager::Save(bool createBackup, std::wstring& outError) {
     }
 
     // Any newly added items that were not in m_lines yet
+    std::wstring lastGroup = L"";
     for (const auto& item : m_items) {
         if (std::find(handledIds.begin(), handledIds.end(), item.id) == handledIds.end()) {
+            std::wstring g = item.group.empty() ? L"General" : item.group;
+            if (g != lastGroup && g != L"General") {
+                outputText += L"\r\n# [";
+                outputText += g;
+                outputText += L"]\r\n";
+                lastGroup = g;
+            }
             outputText += FormatHostLine(item);
             outputText += L"\r\n";
         }
@@ -367,12 +436,13 @@ bool HostsManager::Save(bool createBackup, std::wstring& outError) {
     return true;
 }
 
-int HostsManager::AddItem(const std::wstring& ip, const std::wstring& domain, const std::wstring& comment, bool enabled) {
+int HostsManager::AddItem(const std::wstring& ip, const std::wstring& domain, const std::wstring& comment, const std::wstring& group, bool enabled) {
     HostItem item;
     item.id = m_nextId++;
     item.ip = Trim(ip);
     item.domain = Trim(domain);
     item.comment = Trim(comment);
+    item.group = Trim(group.empty() ? L"General" : group);
     item.enabled = enabled;
     item.lineIndex = m_lines.size();
 
@@ -387,17 +457,85 @@ int HostsManager::AddItem(const std::wstring& ip, const std::wstring& domain, co
     return item.id;
 }
 
-bool HostsManager::UpdateItem(int id, const std::wstring& ip, const std::wstring& domain, const std::wstring& comment) {
+bool HostsManager::UpdateItem(int id, const std::wstring& ip, const std::wstring& domain, const std::wstring& comment, const std::wstring& group) {
     for (auto& item : m_items) {
         if (item.id == id) {
             item.ip = Trim(ip);
             item.domain = Trim(domain);
             item.comment = Trim(comment);
+            item.group = Trim(group.empty() ? L"General" : group);
             m_isModified = true;
             return true;
         }
     }
     return false;
+}
+
+std::vector<std::wstring> HostsManager::GetGroups() const {
+    std::vector<std::wstring> groups;
+    bool hasGeneral = false;
+
+    for (const auto& item : m_items) {
+        std::wstring g = item.group.empty() ? L"General" : item.group;
+        if (g == L"General") {
+            hasGeneral = true;
+        } else if (std::find(groups.begin(), groups.end(), g) == groups.end()) {
+            groups.push_back(g);
+        }
+    }
+
+    std::sort(groups.begin(), groups.end());
+    if (hasGeneral || groups.empty()) {
+        groups.insert(groups.begin(), L"General");
+    }
+    return groups;
+}
+
+void HostsManager::SetGroupEnabled(const std::wstring& group, bool enabled) {
+    bool changed = false;
+    for (auto& item : m_items) {
+        std::wstring g = item.group.empty() ? L"General" : item.group;
+        if (g == group) {
+            if (item.enabled != enabled) {
+                item.enabled = enabled;
+                changed = true;
+            }
+        }
+    }
+    if (changed) {
+        m_isModified = true;
+    }
+}
+
+void HostsManager::ToggleGroup(const std::wstring& group) {
+    // If any item in the group is disabled, enable all; else disable all
+    bool hasDisabled = false;
+    for (const auto& item : m_items) {
+        std::wstring g = item.group.empty() ? L"General" : item.group;
+        if (g == group && !item.enabled) {
+            hasDisabled = true;
+            break;
+        }
+    }
+    SetGroupEnabled(group, hasDisabled);
+}
+
+size_t HostsManager::GetGroupCount(const std::wstring& group) const {
+    size_t count = 0;
+    for (const auto& item : m_items) {
+        std::wstring g = item.group.empty() ? L"General" : item.group;
+        if (g == group) count++;
+    }
+    return count;
+}
+
+size_t HostsManager::GetGroupActiveCount(const std::wstring& group) const {
+    size_t count = 0;
+    for (const auto& item : m_items) {
+        std::wstring g = item.group.empty() ? L"General" : item.group;
+        if (g == group && item.enabled) count++;
+    }
+    return count;
 }
 
 bool HostsManager::ToggleItem(int id) {
