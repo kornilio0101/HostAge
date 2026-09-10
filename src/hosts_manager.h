@@ -62,6 +62,10 @@ public:
 
     // Groups
     std::vector<std::wstring> GetGroups() const;
+    bool AddGroup(const std::wstring& groupName);
+    bool RenameGroup(const std::wstring& oldName, const std::wstring& newName);
+    bool RemoveGroup(const std::wstring& groupName); // Reverts domains to Ungrouped, NOT deleted!
+    bool AssignItemGroup(int itemId, const std::wstring& groupName);
     void SetGroupEnabled(const std::wstring& group, bool enabled);
     void ToggleGroup(const std::wstring& group);
     size_t GetGroupCount(const std::wstring& group) const;
@@ -95,6 +99,7 @@ private:
     std::wstring m_hostsPath;
     std::vector<HostItem> m_items;
     std::vector<FileLine> m_lines;
+    std::vector<std::wstring> m_customGroups;
     bool m_isModified;
     int m_nextId;
 

@@ -60,9 +60,11 @@ Whenever changes are saved, Hostage directly calls `DnsFlushResolverCache()` fro
 
 ### 5. Domain Groups & Section Organization 📁
 Organize domains into logical groups like **Development**, **AdBlock**, **Privacy**, or custom projects:
-- Hosts files maintain sections using clean headers (`# [Development]`, `# [AdBlock]`).
-- Visual group banners show active counts and allow one-click **Toggle Group** to activate or disable an entire set of domains at once.
-- Filter dropdown allows isolating any single group with one click.
+- **Add, Rename & Edit Groups**: Create new groups and rename existing ones at any time via the `⚙️ Groups...` manager.
+- **Assign Domains to Groups**: Click any domain's group badge to quickly reassign it to another group, or select from the dropdown when editing/adding.
+- **Safe Group Removal (Zero Data Loss)**: When a group is deleted, all its domains and IPs **automatically revert to 'Ungrouped' and are NEVER deleted**.
+- **1-Click Group Toggling**: Visual group section headers feature a `Toggle Group` button to activate or disable an entire group of domains simultaneously.
+- **Group Filter Dropdown**: Quickly isolate any single group or view all groups with one click (`📁 All Groups ▼`).
 
 ### 6. Automatic Safety Backups 🔄
 Before saving any modifications, an automated timestamped backup is generated (`hosts.bak_YYYYMMDD_HHMMSS`). If anything ever goes wrong, click **Backups** to restore any previous version with a single click.

@@ -473,22 +473,111 @@ bool HostsManager::UpdateItem(int id, const std::wstring& ip, const std::wstring
 
 std::vector<std::wstring> HostsManager::GetGroups() const {
     std::vector<std::wstring> groups;
-    bool hasGeneral = false;
+    bool hasDefault = false;
 
     for (const auto& item : m_items) {
         std::wstring g = item.group.empty() ? L"General" : item.group;
-        if (g == L"General") {
-            hasGeneral = true;
+        if (g == L"General" || g == L"Ungrouped") {
+            hasDefault = true;
         } else if (std::find(groups.begin(), groups.end(), g) == groups.end()) {
             groups.push_back(g);
         }
     }
 
+    for (const auto& cg : m_customGroups) {
+        if (cg == L"General" || cg == L"Ungrouped") {
+            hasDefault = true;
+        } else if (std::find(groups.begin(), groups.end(), cg) == groups.end()) {
+            groups.push_back(cg);
+        }
+    }
+
     std::sort(groups.begin(), groups.end());
-    if (hasGeneral || groups.empty()) {
+    if (hasDefault || groups.empty()) {
         groups.insert(groups.begin(), L"General");
     }
     return groups;
+}
+
+bool HostsManager::AddGroup(const std::wstring& groupName) {
+    std::wstring g = Trim(groupName);
+    if (g.empty()) return false;
+    auto groups = GetGroups();
+    if (std::find(groups.begin(), groups.end(), g) == groups.end()) {
+        m_customGroups.push_back(g);
+        m_isModified = true;
+        return true;
+    }
+    return false;
+}
+
+bool HostsManager::RenameGroup(const std::wstring& oldName, const std::wstring& newName) {
+    std::wstring o = Trim(oldName);
+    std::wstring n = Trim(newName);
+    if (o.empty() || n.empty() || o == n) return false;
+
+    bool found = false;
+    for (auto& item : m_items) {
+        std::wstring g = item.group.empty() ? L"General" : item.group;
+        if (g == o) {
+            item.group = n;
+            found = true;
+        }
+    }
+
+    for (auto& cg : m_customGroups) {
+        if (cg == o) {
+            cg = n;
+            found = true;
+        }
+    }
+
+    if (found) {
+        m_isModified = true;
+        return true;
+    }
+    return false;
+}
+
+bool HostsManager::RemoveGroup(const std::wstring& groupName) {
+    std::wstring g = Trim(groupName);
+    if (g.empty()) return false;
+
+    // CRITICAL: Revert all items in this group to "Ungrouped", do NOT delete them!
+    bool changed = false;
+    for (auto& item : m_items) {
+        std::wstring ig = item.group.empty() ? L"General" : item.group;
+        if (ig == g) {
+            item.group = L"Ungrouped";
+            changed = true;
+        }
+    }
+
+    auto it = std::remove(m_customGroups.begin(), m_customGroups.end(), g);
+    if (it != m_customGroups.end()) {
+        m_customGroups.erase(it, m_customGroups.end());
+        changed = true;
+    }
+
+    if (changed) {
+        m_isModified = true;
+        return true;
+    }
+    return false;
+}
+
+bool HostsManager::AssignItemGroup(int itemId, const std::wstring& groupName) {
+    std::wstring g = Trim(groupName.empty() ? L"Ungrouped" : groupName);
+    for (auto& item : m_items) {
+        if (item.id == itemId) {
+            if (item.group != g) {
+                item.group = g;
+                m_isModified = true;
+            }
+            return true;
+        }
+    }
+    return false;
 }
 
 void HostsManager::SetGroupEnabled(const std::wstring& group, bool enabled) {

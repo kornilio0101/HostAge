@@ -48,6 +48,7 @@
 
 #define IDM_RESTORE_BASE      2000
 #define IDM_GROUP_FILTER_BASE 3000
+#define IDM_ASSIGN_BASE       5000
 
 // Filter modes
 enum class FilterMode {
@@ -98,7 +99,7 @@ struct AppState {
     int scrollOffset;
     int maxScroll;
     int hoveredRowIndex;
-    int hoveredButton; // 0=None, 1=Toggle, 2=Edit, 3=Delete, 4=GroupToggle
+    int hoveredButton; // 0=None, 1=Toggle, 2=Edit, 3=Delete, 4=GroupToggle, 5=GroupBadge
     int activeEditId;
 
     // Filtered list rows
@@ -114,7 +115,10 @@ static AppState g_app;
 
 // Forward declarations
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
-INT_PTR CALLBACK EditDialogProc(HWND, UINT, WPARAM, LPARAM);
+void OpenEditWindow(HWND hWndParent, int itemId);
+void OpenManageGroupsWindow(HWND hWndParent);
+void ShowGroupFilterMenu(HWND hWnd);
+void ShowAssignGroupMenu(HWND hWnd, int itemId);
 void UpdateFilteredList();
 void ShowToast(const std::wstring& msg);
 
@@ -199,7 +203,9 @@ static LRESULT CALLBACK DarkEditProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM 
     return CallWindowProc(g_OldEditProc, hWnd, msg, wParam, lParam);
 }
 
-// Custom Modal Edit Window
+// ============================================================================
+// Modal Edit Window (Edit IP, Domain, Group, Comment, Status)
+// ============================================================================
 static HWND g_hEditModal = NULL;
 static HWND g_hModalIp = NULL;
 static HWND g_hModalDomain = NULL;
@@ -218,7 +224,7 @@ static LRESULT CALLBACK ModalEditWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPA
         CreateWindowW(L"STATIC", L"Domain Name(s):", WS_CHILD | WS_VISIBLE, 25, 70, 120, 18, hWnd, NULL, g_app.hInstance, NULL);
         g_hModalDomain = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL, 25, 90, 330, 24, hWnd, NULL, g_app.hInstance, NULL);
 
-        CreateWindowW(L"STATIC", L"Group / Category:", WS_CHILD | WS_VISIBLE, 25, 122, 140, 18, hWnd, NULL, g_app.hInstance, NULL);
+        CreateWindowW(L"STATIC", L"Group / Category (Assign or create new):", WS_CHILD | WS_VISIBLE, 25, 122, 280, 18, hWnd, NULL, g_app.hInstance, NULL);
         g_hModalGroup = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"General", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL, 25, 142, 330, 24, hWnd, NULL, g_app.hInstance, NULL);
 
         CreateWindowW(L"STATIC", L"Comment (Optional):", WS_CHILD | WS_VISIBLE, 25, 174, 140, 18, hWnd, NULL, g_app.hInstance, NULL);
@@ -338,6 +344,298 @@ void OpenEditWindow(HWND hWndParent, int itemId) {
     );
 }
 
+// ============================================================================
+// Manage Groups Modal Window (Add / Rename / Remove Groups)
+// ============================================================================
+static HWND g_hManageGroupsModal = NULL;
+static HWND g_hListGroups = NULL;
+static HWND g_hEditNewGroup = NULL;
+static HWND g_hEditRenameGroup = NULL;
+
+static void RefreshGroupListbox(HWND hListBox) {
+    SendMessage(hListBox, LB_RESETCONTENT, 0, 0);
+    auto groups = g_app.hosts.GetGroups();
+    for (const auto& g : groups) {
+        size_t count = g_app.hosts.GetGroupCount(g);
+        std::wstring itemText = g + L"  (" + std::to_wstring(count) + L" domains)";
+        SendMessageW(hListBox, LB_ADDSTRING, 0, (LPARAM)itemText.c_str());
+    }
+}
+
+static LRESULT CALLBACK ManageGroupsWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+    case WM_CREATE: {
+        HFONT hFont = g_app.hFontRegular;
+
+        CreateWindowW(L"STATIC", L"Manage Domain Groups", WS_CHILD | WS_VISIBLE, 20, 16, 260, 22, hWnd, NULL, g_app.hInstance, NULL);
+        CreateWindowW(L"STATIC", L"Existing Groups:", WS_CHILD | WS_VISIBLE, 20, 46, 200, 18, hWnd, NULL, g_app.hInstance, NULL);
+
+        g_hListGroups = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", L"",
+            WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_TABSTOP | LBS_NOTIFY,
+            20, 68, 220, 240, hWnd, (HMENU)4001, g_app.hInstance, NULL);
+
+        // Right side: Add Group
+        CreateWindowW(L"STATIC", L"Add New Group:", WS_CHILD | WS_VISIBLE, 260, 46, 180, 18, hWnd, NULL, g_app.hInstance, NULL);
+        g_hEditNewGroup = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+            260, 68, 195, 26, hWnd, (HMENU)4002, g_app.hInstance, NULL);
+        CreateWindowW(L"BUTTON", L"+ Add Group", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
+            260, 100, 195, 28, hWnd, (HMENU)4003, g_app.hInstance, NULL);
+
+        // Rename Selected Group
+        CreateWindowW(L"STATIC", L"Rename Selected Group:", WS_CHILD | WS_VISIBLE, 260, 142, 190, 18, hWnd, NULL, g_app.hInstance, NULL);
+        g_hEditRenameGroup = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+            260, 164, 195, 26, hWnd, (HMENU)4004, g_app.hInstance, NULL);
+        CreateWindowW(L"BUTTON", L"Rename Group", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
+            260, 196, 195, 28, hWnd, (HMENU)4005, g_app.hInstance, NULL);
+
+        // Remove Selected Group
+        CreateWindowW(L"BUTTON", L"Remove Group", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_TABSTOP,
+            260, 240, 195, 32, hWnd, (HMENU)4006, g_app.hInstance, NULL);
+
+        // Bottom note and Close button
+        CreateWindowW(L"STATIC", L"* Removing a group reverts domains & IPs to 'Ungrouped' (never deleted).",
+            WS_CHILD | WS_VISIBLE, 20, 322, 440, 18, hWnd, NULL, g_app.hInstance, NULL);
+        CreateWindowW(L"BUTTON", L"Done", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON | WS_TABSTOP,
+            375, 350, 80, 32, hWnd, (HMENU)IDOK, g_app.hInstance, NULL);
+
+        SendMessage(g_hListGroups, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SendMessage(g_hEditNewGroup, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SendMessage(g_hEditRenameGroup, WM_SETFONT, (WPARAM)hFont, TRUE);
+
+        SendMessageW(g_hEditNewGroup, 0x1501 /*EM_SETCUEBANNER*/, TRUE, (LPARAM)L"New group name...");
+        SendMessageW(g_hEditRenameGroup, 0x1501 /*EM_SETCUEBANNER*/, TRUE, (LPARAM)L"New name for selected...");
+
+        RefreshGroupListbox(g_hListGroups);
+        return 0;
+    }
+    case WM_CTLCOLORSTATIC: {
+        HDC hdc = (HDC)wParam;
+        SetTextColor(hdc, RGB(220, 225, 235));
+        SetBkColor(hdc, RGB(24, 26, 36));
+        static HBRUSH hbr = CreateSolidBrush(RGB(24, 26, 36));
+        return (INT_PTR)hbr;
+    }
+    case WM_COMMAND: {
+        int id = LOWORD(wParam);
+        int code = HIWORD(wParam);
+
+        if (id == 4001 && code == LBN_SELCHANGE) {
+            int sel = (int)SendMessage(g_hListGroups, LB_GETCURSEL, 0, 0);
+            if (sel != LB_ERR) {
+                auto groups = g_app.hosts.GetGroups();
+                if (sel >= 0 && sel < (int)groups.size()) {
+                    SetWindowTextW(g_hEditRenameGroup, groups[sel].c_str());
+                }
+            }
+            return 0;
+        }
+
+        // Add Group
+        if (id == 4003) {
+            wchar_t szNewGroup[256] = {0};
+            GetWindowTextW(g_hEditNewGroup, szNewGroup, 256);
+            std::wstring gName(szNewGroup);
+            if (gName.empty()) {
+                MessageBoxW(hWnd, L"Please enter a valid group name.", L"Validation", MB_OK | MB_ICONWARNING);
+                return 0;
+            }
+            if (g_app.hosts.AddGroup(gName)) {
+                RefreshGroupListbox(g_hListGroups);
+                SetWindowTextW(g_hEditNewGroup, L"");
+                UpdateFilteredList();
+                ShowToast(L"Group '" + gName + L"' created.");
+            } else {
+                MessageBoxW(hWnd, L"Group already exists or name is invalid.", L"Information", MB_OK | MB_ICONINFORMATION);
+            }
+            return 0;
+        }
+
+        // Rename Group
+        if (id == 4005) {
+            int sel = (int)SendMessage(g_hListGroups, LB_GETCURSEL, 0, 0);
+            if (sel == LB_ERR) {
+                MessageBoxW(hWnd, L"Please select a group to rename from the list.", L"Selection Required", MB_OK | MB_ICONINFORMATION);
+                return 0;
+            }
+            auto groups = g_app.hosts.GetGroups();
+            if (sel >= 0 && sel < (int)groups.size()) {
+                std::wstring oldName = groups[sel];
+                wchar_t szNewName[256] = {0};
+                GetWindowTextW(g_hEditRenameGroup, szNewName, 256);
+                std::wstring newName(szNewName);
+                if (newName.empty()) {
+                    MessageBoxW(hWnd, L"Please enter a new group name.", L"Validation", MB_OK | MB_ICONWARNING);
+                    return 0;
+                }
+                if (g_app.hosts.RenameGroup(oldName, newName)) {
+                    RefreshGroupListbox(g_hListGroups);
+                    UpdateFilteredList();
+                    ShowToast(L"Renamed group '" + oldName + L"' to '" + newName + L"'.");
+                } else {
+                    MessageBoxW(hWnd, L"Could not rename group (name may already exist).", L"Rename Failed", MB_OK | MB_ICONWARNING);
+                }
+            }
+            return 0;
+        }
+
+        // Remove Group
+        if (id == 4006) {
+            int sel = (int)SendMessage(g_hListGroups, LB_GETCURSEL, 0, 0);
+            if (sel == LB_ERR) {
+                MessageBoxW(hWnd, L"Please select a group to remove from the list.", L"Selection Required", MB_OK | MB_ICONINFORMATION);
+                return 0;
+            }
+            auto groups = g_app.hosts.GetGroups();
+            if (sel >= 0 && sel < (int)groups.size()) {
+                std::wstring groupToRemove = groups[sel];
+                size_t count = g_app.hosts.GetGroupCount(groupToRemove);
+
+                std::wstringstream confirmMsg;
+                confirmMsg << L"Are you sure you want to remove the group '" << groupToRemove << L"'?\n\n"
+                           << L"All " << count << L" domain(s) and IP(s) in this group will revert to 'Ungrouped' and will NOT be deleted.";
+
+                if (MessageBoxW(hWnd, confirmMsg.str().c_str(), L"Confirm Remove Group", MB_YESNO | MB_ICONQUESTION) == IDYES) {
+                    if (g_app.hosts.RemoveGroup(groupToRemove)) {
+                        RefreshGroupListbox(g_hListGroups);
+                        SetWindowTextW(g_hEditRenameGroup, L"");
+                        UpdateFilteredList();
+                        ShowToast(L"Group '" + groupToRemove + L"' removed. Domains reverted to Ungrouped.");
+                    }
+                }
+            }
+            return 0;
+        }
+
+        if (id == IDOK || id == IDCANCEL) {
+            EnableWindow(g_app.hWndMain, TRUE);
+            DestroyWindow(hWnd);
+            g_hManageGroupsModal = NULL;
+            InvalidateRect(g_app.hWndMain, NULL, FALSE);
+            return 0;
+        }
+        break;
+    }
+    case WM_CLOSE: {
+        EnableWindow(g_app.hWndMain, TRUE);
+        DestroyWindow(hWnd);
+        g_hManageGroupsModal = NULL;
+        InvalidateRect(g_app.hWndMain, NULL, FALSE);
+        return 0;
+    }
+    }
+    return DefWindowProcW(hWnd, msg, wParam, lParam);
+}
+
+void OpenManageGroupsWindow(HWND hWndParent) {
+    if (g_hManageGroupsModal) return;
+
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc = { sizeof(wc) };
+        wc.lpfnWndProc = ManageGroupsWndProc;
+        wc.hInstance = g_app.hInstance;
+        wc.hbrBackground = CreateSolidBrush(RGB(24, 26, 36));
+        wc.lpszClassName = L"HostageManageGroupsModal";
+        wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+        RegisterClassExW(&wc);
+        registered = true;
+    }
+
+    RECT rcParent;
+    GetWindowRect(hWndParent, &rcParent);
+    int w = 490;
+    int h = 430;
+    int x = rcParent.left + (rcParent.right - rcParent.left - w) / 2;
+    int y = rcParent.top + (rcParent.bottom - rcParent.top - h) / 2;
+
+    EnableWindow(hWndParent, FALSE);
+    g_hManageGroupsModal = CreateWindowExW(
+        WS_EX_DLGMODALFRAME | WS_EX_TOPMOST,
+        L"HostageManageGroupsModal",
+        L"Manage Groups",
+        WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
+        x, y, w, h,
+        hWndParent, NULL, g_app.hInstance, NULL
+    );
+}
+
+// Quick Group Assignment Menu (shown when clicking the Group Pill on a card)
+void ShowAssignGroupMenu(HWND hWnd, int itemId) {
+    auto groups = g_app.hosts.GetGroups();
+    HMENU hMenu = CreatePopupMenu();
+
+    AppendMenuW(hMenu, MF_STRING | MF_GRAYED, 0, L"Assign Domain to Group:");
+    AppendMenuW(hMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenuW(hMenu, MF_STRING, IDM_ASSIGN_BASE, L"Ungrouped");
+    AppendMenuW(hMenu, MF_SEPARATOR, 0, NULL);
+
+    for (size_t i = 0; i < groups.size(); ++i) {
+        if (groups[i] == L"Ungrouped") continue;
+        AppendMenuW(hMenu, MF_STRING, IDM_ASSIGN_BASE + 1 + (UINT)i, groups[i].c_str());
+    }
+
+    AppendMenuW(hMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenuW(hMenu, MF_STRING, IDM_ASSIGN_BASE + 999, L"⚙️ Manage Groups...");
+
+    POINT pt;
+    GetCursorPos(&pt);
+    int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_NONOTIFY, pt.x, pt.y, 0, hWnd, NULL);
+    DestroyMenu(hMenu);
+
+    if (cmd == IDM_ASSIGN_BASE) {
+        g_app.hosts.AssignItemGroup(itemId, L"Ungrouped");
+        UpdateFilteredList();
+        ShowToast(L"Domain reverted to Ungrouped.");
+        InvalidateRect(hWnd, NULL, FALSE);
+    } else if (cmd == IDM_ASSIGN_BASE + 999) {
+        OpenManageGroupsWindow(hWnd);
+    } else if (cmd > IDM_ASSIGN_BASE && cmd <= IDM_ASSIGN_BASE + (int)groups.size()) {
+        size_t idx = cmd - IDM_ASSIGN_BASE - 1;
+        g_app.hosts.AssignItemGroup(itemId, groups[idx]);
+        UpdateFilteredList();
+        ShowToast(L"Assigned domain to group [" + groups[idx] + L"].");
+        InvalidateRect(hWnd, NULL, FALSE);
+    }
+}
+
+// Show Group Filter Popup Menu
+void ShowGroupFilterMenu(HWND hWnd) {
+    auto groups = g_app.hosts.GetGroups();
+    HMENU hMenu = CreatePopupMenu();
+
+    AppendMenuW(hMenu, (g_app.selectedGroupFilter.empty() ? MF_CHECKED : MF_UNCHECKED) | MF_STRING, IDM_GROUP_FILTER_BASE, L"All Groups");
+    AppendMenuW(hMenu, MF_SEPARATOR, 0, NULL);
+
+    for (size_t i = 0; i < groups.size(); ++i) {
+        std::wstring label = groups[i] + L" (" + std::to_wstring(g_app.hosts.GetGroupCount(groups[i])) + L")";
+        UINT flags = MF_STRING;
+        if (g_app.selectedGroupFilter == groups[i]) flags |= MF_CHECKED;
+        AppendMenuW(hMenu, flags, IDM_GROUP_FILTER_BASE + 1 + (UINT)i, label.c_str());
+    }
+
+    AppendMenuW(hMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenuW(hMenu, MF_STRING, IDM_GROUP_FILTER_BASE + 999, L"⚙️ Manage Groups (Add / Rename / Remove)...");
+
+    POINT pt;
+    GetCursorPos(&pt);
+    int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_NONOTIFY, pt.x, pt.y, 0, hWnd, NULL);
+    DestroyMenu(hMenu);
+
+    if (cmd == IDM_GROUP_FILTER_BASE) {
+        g_app.selectedGroupFilter.clear();
+        UpdateFilteredList();
+        InvalidateRect(hWnd, NULL, FALSE);
+    } else if (cmd == IDM_GROUP_FILTER_BASE + 999) {
+        OpenManageGroupsWindow(hWnd);
+    } else if (cmd > IDM_GROUP_FILTER_BASE && cmd <= IDM_GROUP_FILTER_BASE + (int)groups.size()) {
+        g_app.selectedGroupFilter = groups[cmd - IDM_GROUP_FILTER_BASE - 1];
+        UpdateFilteredList();
+        InvalidateRect(hWnd, NULL, FALSE);
+    }
+}
+
 // Layout helper coordinates
 struct UILayout {
     int winW;
@@ -368,37 +666,6 @@ static UILayout GetLayout(int w, int h) {
     l.listY = l.filterY + l.filterH;
     l.listH = max(100, l.bottomY - l.listY);
     return l;
-}
-
-// Show Group Filter Popup Menu
-void ShowGroupFilterMenu(HWND hWnd) {
-    auto groups = g_app.hosts.GetGroups();
-    HMENU hMenu = CreatePopupMenu();
-
-    AppendMenuW(hMenu, (g_app.selectedGroupFilter.empty() ? MF_CHECKED : MF_UNCHECKED) | MF_STRING, IDM_GROUP_FILTER_BASE, L"All Groups");
-    AppendMenuW(hMenu, MF_SEPARATOR, 0, NULL);
-
-    for (size_t i = 0; i < groups.size(); ++i) {
-        std::wstring label = groups[i] + L" (" + std::to_wstring(g_app.hosts.GetGroupCount(groups[i])) + L")";
-        UINT flags = MF_STRING;
-        if (g_app.selectedGroupFilter == groups[i]) flags |= MF_CHECKED;
-        AppendMenuW(hMenu, flags, IDM_GROUP_FILTER_BASE + 1 + (UINT)i, label.c_str());
-    }
-
-    POINT pt;
-    GetCursorPos(&pt);
-    int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_NONOTIFY, pt.x, pt.y, 0, hWnd, NULL);
-    DestroyMenu(hMenu);
-
-    if (cmd == IDM_GROUP_FILTER_BASE) {
-        g_app.selectedGroupFilter.clear();
-        UpdateFilteredList();
-        InvalidateRect(hWnd, NULL, FALSE);
-    } else if (cmd > IDM_GROUP_FILTER_BASE && cmd <= IDM_GROUP_FILTER_BASE + (int)groups.size()) {
-        g_app.selectedGroupFilter = groups[cmd - IDM_GROUP_FILTER_BASE - 1];
-        UpdateFilteredList();
-        InvalidateRect(hWnd, NULL, FALSE);
-    }
 }
 
 // Paint the entire UI in double buffer
@@ -508,7 +775,7 @@ void PaintUI(HDC hdc, const RECT& clientRect) {
             std::wstring tabStr = ss.str();
             Gdiplus::RectF b;
             g.MeasureString(tabStr.c_str(), -1, &fontBold, Gdiplus::RectF(0, 0, 500, 100), NULL, &b);
-            float tabW = b.Width + 24.0f;
+            float tabW = b.Width + 20.0f;
             float tabH = 30.0f;
 
             Gdiplus::RectF tabRect(tabX, filterY, tabW, tabH);
@@ -524,7 +791,7 @@ void PaintUI(HDC hdc, const RECT& clientRect) {
             Gdiplus::SolidBrush textB(text);
             g.DrawString(tabStr.c_str(), -1, &fontBold, tabRect, &sf, &textB);
 
-            tabX += tabW + 8.0f;
+            tabX += tabW + 6.0f;
             return tabW;
         };
 
@@ -537,7 +804,7 @@ void PaintUI(HDC hdc, const RECT& clientRect) {
         std::wstring grpFilterLabel = g_app.selectedGroupFilter.empty() ? L"📁 All Groups ▼" : (L"📁 " + g_app.selectedGroupFilter + L" ▼");
         Gdiplus::RectF grpBounds;
         g.MeasureString(grpFilterLabel.c_str(), -1, &fontBold, Gdiplus::RectF(0, 0, 500, 100), NULL, &grpBounds);
-        float grpFilterW = grpBounds.Width + 20.0f;
+        float grpFilterW = grpBounds.Width + 18.0f;
         Gdiplus::RectF grpFilterRect(grpFilterX, filterY, grpFilterW, 30.0f);
         Gdiplus::Color grpFilterBg = !g_app.selectedGroupFilter.empty() ? Gdiplus::Color(255, 67, 56, 202) : Gdiplus::Color(255, 32, 36, 52);
         UITheme::DrawRoundedRect(g, grpFilterRect, 6.0f, grpFilterBg, UITheme::Colors::BorderDark, 1.0f);
@@ -545,6 +812,13 @@ void PaintUI(HDC hdc, const RECT& clientRect) {
         sfCenter.SetAlignment(Gdiplus::StringAlignmentCenter);
         sfCenter.SetLineAlignment(Gdiplus::StringAlignmentCenter);
         g.DrawString(grpFilterLabel.c_str(), -1, &fontBold, grpFilterRect, &sfCenter, &textWhite);
+
+        // Dedicated "Manage Groups" Button
+        float mgmtBtnX = grpFilterX + grpFilterW + 6.0f;
+        float mgmtBtnW = 92.0f;
+        Gdiplus::RectF mgmtRect(mgmtBtnX, filterY, mgmtBtnW, 30.0f);
+        UITheme::DrawRoundedRect(g, mgmtRect, 6.0f, Gdiplus::Color(255, 30, 34, 48), UITheme::Colors::BorderDark, 1.0f);
+        g.DrawString(L"⚙️ Groups...", -1, &fontSmall, mgmtRect, &sfCenter, &textWhite);
 
         // Bulk action buttons on the right of filter bar
         float bulkRightX = (float)width - 24.0f;
@@ -655,10 +929,12 @@ void PaintUI(HDC hdc, const RECT& clientRect) {
                             float ipY = (float)curY + ((float)rHeight - 22.0f) / 2.0f;
                             UITheme::DrawBadge(g, pItem->ip, ipX, ipY, UITheme::Colors::AccentCyan, Gdiplus::Color(255, 18, 32, 46), &fontMono, 8, 3);
 
-                            // Group Pill Badge
+                            // Interactive Group Pill Badge (Clickable to change group)
                             float grpBadgeX = ipX + 130.0f;
                             std::wstring grpText = pItem->group.empty() ? L"General" : pItem->group;
-                            UITheme::DrawBadge(g, grpText, grpBadgeX, ipY, UITheme::Colors::PrimaryText, Gdiplus::Color(255, 67, 56, 202), &fontBadge, 7, 2);
+                            bool grpBadgeHover = (isHovered && g_app.hoveredButton == 5);
+                            Gdiplus::Color grpBadgeBg = grpBadgeHover ? Gdiplus::Color(255, 99, 102, 241) : Gdiplus::Color(255, 67, 56, 202);
+                            UITheme::DrawBadge(g, grpText, grpBadgeX, ipY, UITheme::Colors::PrimaryText, grpBadgeBg, &fontBadge, 7, 2);
 
                             // Domain Name
                             float domX = grpBadgeX + (float)grpText.size() * 8.0f + 25.0f;
@@ -831,7 +1107,7 @@ void RepositionControls(int width, int height) {
     MoveWindow(g_app.hBtnAdd, addX, ipY - 1, btnW, inputH + 2, TRUE);
 
     // Search Box (placed on right side of Filter Bar)
-    int searchW = 220;
+    int searchW = 210;
     int searchX = width - 24 - 180 - searchW - 10;
     int searchY = l.filterY + 8;
     MoveWindow(g_app.hEditSearch, searchX, searchY, searchW, 26, TRUE);
@@ -913,9 +1189,13 @@ void HandleMouseClick(int x, int y) {
             UpdateFilteredList();
             InvalidateRect(g_app.hWndMain, NULL, FALSE);
             return;
-        } else if (x >= 273 && x <= 430) {
+        } else if (x >= 273 && x <= 395) {
             // Group Filter dropdown
             ShowGroupFilterMenu(g_app.hWndMain);
+            return;
+        } else if (x >= 400 && x <= 495) {
+            // Manage Groups button
+            OpenManageGroupsWindow(g_app.hWndMain);
             return;
         }
 
@@ -941,7 +1221,6 @@ void HandleMouseClick(int x, int y) {
         int rowIndex = FindRowIndexAt(y, l.listY, g_app.scrollOffset);
         if (rowIndex >= 0 && rowIndex < (int)g_app.visibleRows.size()) {
             const auto& row = g_app.visibleRows[rowIndex];
-            int rowY = GetRowTopY(rowIndex, l.listY, g_app.scrollOffset);
             float cardW = (float)width - 48.0f;
 
             if (row.type == ListRowType::GroupHeader) {
@@ -977,6 +1256,25 @@ void HandleMouseClick(int x, int y) {
                 if (x >= editX && x <= editX + editW) {
                     OpenEditWindow(g_app.hWndMain, itemId);
                     return;
+                }
+
+                // Group Pill Badge click -> Quick Assign Group Menu!
+                float badgeX = 34.0f + 50.0f;
+                float ipX = badgeX + 75.0f;
+                float grpBadgeX = ipX + 130.0f;
+
+                const HostItem* pItem = nullptr;
+                for (const auto& item : g_app.hosts.GetItems()) {
+                    if (item.id == itemId) { pItem = &item; break; }
+                }
+
+                if (pItem) {
+                    std::wstring grpText = pItem->group.empty() ? L"General" : pItem->group;
+                    float grpBadgeW = (float)grpText.size() * 8.5f + 18.0f;
+                    if (x >= grpBadgeX && x <= grpBadgeX + grpBadgeW) {
+                        ShowAssignGroupMenu(g_app.hWndMain, itemId);
+                        return;
+                    }
                 }
 
                 // Toggle Switch or left card click
@@ -1072,12 +1370,27 @@ void HandleMouseMove(int x, int y) {
                 float editW = 55.0f;
                 float editX = delX - editW - 8.0f;
 
+                float badgeX = 34.0f + 50.0f;
+                float ipX = badgeX + 75.0f;
+                float grpBadgeX = ipX + 130.0f;
+
+                const HostItem* pItem = nullptr;
+                for (const auto& item : g_app.hosts.GetItems()) {
+                    if (item.id == row.hostItemId) { pItem = &item; break; }
+                }
+
                 if (x >= 34.0f && x <= 74.0f) {
                     g_app.hoveredButton = 1; // Toggle
                 } else if (x >= editX && x <= editX + editW) {
                     g_app.hoveredButton = 2; // Edit
                 } else if (x >= delX && x <= delX + delW) {
                     g_app.hoveredButton = 3; // Delete
+                } else if (pItem) {
+                    std::wstring grpText = pItem->group.empty() ? L"General" : pItem->group;
+                    float grpBadgeW = (float)grpText.size() * 8.5f + 18.0f;
+                    if (x >= grpBadgeX && x <= grpBadgeX + grpBadgeW) {
+                        g_app.hoveredButton = 5; // GroupBadge
+                    }
                 }
             }
         }
